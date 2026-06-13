@@ -250,20 +250,23 @@ def _specialization_options(compute_unit: str | None):
     """
     if compute_unit is None:
         return None
+    if compute_unit == "cpu_only":
+        from coreai.runtime import SpecializationOptions
+
+        return SpecializationOptions.cpu_only()
+    if compute_unit not in _COMPUTE_UNITS:
+        raise CoreaiOnnxError(
+            f"unknown compute_unit '{compute_unit}' "
+            f"(expected one of {', '.join(_COMPUTE_UNITS)})"
+        )
+
     from coreai.runtime import ComputeUnitKind, SpecializationOptions
 
-    if compute_unit == "cpu_only":
-        return SpecializationOptions.cpu_only()
     kinds = {
         "cpu": ComputeUnitKind.cpu,
         "gpu": ComputeUnitKind.gpu,
         "ane": ComputeUnitKind.neural_engine,
     }
-    if compute_unit not in kinds:
-        raise CoreaiOnnxError(
-            f"unknown compute_unit '{compute_unit}' "
-            f"(expected one of {', '.join(_COMPUTE_UNITS)})"
-        )
     return SpecializationOptions.from_preferred_compute_unit_kind(kinds[compute_unit]())
 
 

@@ -679,10 +679,13 @@ def test_verify_json_nonfinite_tolerances_serialize_as_strings(
 # ---------------------------------------------------------------------------
 
 
-def test_verify_json_missing_file_is_io_error(tmp_path, capsys):
+def test_verify_json_missing_file_is_io_error(tmp_path, capsys, monkeypatch):
     # The file doesn't exist so verify() raises before touching the runtime;
     # the blanket except in _run_verify must NOT swallow OSError — it should
     # re-raise so main()'s _error_from_exception classifies it as io_error.
+    import coreai_onnx._service as _service
+
+    monkeypatch.setattr(_service.platform, "system", lambda: "Darwin")
     rc, env = _run_json(
         [
             "verify",

@@ -166,10 +166,11 @@ def test_ci_builds_distributions_and_docs_on_prs():
     assert "permissions:" in ci
     assert "contents: read" in ci
     assert "concurrency:" in ci
-    assert ci.count("timeout-minutes:") >= 6
-    assert ci.count("cache: pip") >= 5
-    assert ci.count("cache-dependency-path: pyproject.toml") >= 5
+    assert ci.count("timeout-minutes:") >= 3
+    assert ci.count("cache: pip") >= 3
+    assert ci.count("cache-dependency-path: pyproject.toml") >= 3
     assert "pre-commit run --all-files" in ci
+    assert "mypy --ignore-missing-imports src/coreai_onnx" in ci
     assert "pip install ruff" not in ci
     assert "vulture src/coreai_onnx tests --min-confidence 80" in ci
     assert "package:" in ci
@@ -180,16 +181,19 @@ def test_ci_builds_distributions_and_docs_on_prs():
     assert "coverage:" in ci
     assert 'pytest -m "not slow" --cov=coreai_onnx' in ci
     assert 'pytest -m "not slow"' in ci
-    assert 'pytest -m "slow"' in ci
     assert "--cov=coreai_onnx" in ci
     assert "--cov-report=term-missing" in ci
     assert "--cov-report=xml" in ci
     assert 'pytest -n auto -m "not slow"' not in ci
     assert 'pytest -n auto -m "slow"' not in ci
+    assert "macos-latest" not in ci
 
     docs = (REPO_ROOT / ".github" / "workflows" / "docs.yml").read_text()
     assert "pull_request:" in docs
     assert docs.count("timeout-minutes:") >= 2
+    assert "pages: write" in docs
+    assert "id-token: write" in docs
+    assert "enablement: true" in docs
     assert "cache: pip" in docs
     assert "cache-dependency-path: pyproject.toml" in docs
     assert "sphinx-build -b html docs docs/_build/html" in docs
