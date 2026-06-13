@@ -3,7 +3,7 @@
 [![Lightweight CI](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml/badge.svg)](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
-[![PyPI](https://img.shields.io/pypi/v/coreai-onnx)](https://pypi.org/project/coreai-onnx/)
+[![PyPI](https://img.shields.io/pypi/v/coreai-onnx?label=pypi&cacheSeconds=300)](https://pypi.org/project/coreai-onnx/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 **The missing ONNX path into Apple's Core AI.**
