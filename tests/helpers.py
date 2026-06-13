@@ -20,9 +20,20 @@ from onnx import TensorProto, helper
 import coreai_onnx
 from coreai_onnx._type_mapping import narrow_array
 
+
+def _has_coreai_runtime() -> bool:
+    if platform.system() != "Darwin":
+        return False
+    try:
+        major = int(platform.mac_ver()[0].split(".", maxsplit=1)[0])
+    except (IndexError, ValueError):
+        return False
+    return major >= 27
+
+
 requires_coreai_runtime = pytest.mark.skipif(
-    platform.system() != "Darwin",
-    reason="executing .aimodel requires macOS with the Core AI runtime",
+    not _has_coreai_runtime(),
+    reason="executing .aimodel requires macOS 27+ with the Core AI runtime",
 )
 
 _TEST_COMPUTE_UNIT = os.environ.get("COREAI_ONNX_TEST_COMPUTE_UNIT")

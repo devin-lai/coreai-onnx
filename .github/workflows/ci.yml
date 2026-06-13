@@ -12,11 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 # NOTE: macOS GitHub-hosted runners may be older than macOS 27, which is required
-# for the Core AI runtime. Tests guarded by `requires_coreai_runtime` will be
-# skipped or fail silently on those runners. Add a runtime-availability probe
-# (e.g. check for the presence of the Core AI framework dylib) to the
-# requires_coreai_runtime marker in tests/helpers.py if runner images are upgraded
-# to macOS 27 and runtime-executing tests should run in CI.
+# for the Core AI runtime. Runtime-executing tests are guarded by the
+# `requires_coreai_runtime` marker in tests/helpers.py and skip on older runners.
 
 jobs:
   lint:
