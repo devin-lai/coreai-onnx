@@ -14,11 +14,14 @@ import pytest
 from coreai_onnx._mcp import _build_server
 from coreai_onnx._mcp import main as mcp_main
 from tests.helpers import (
+    COREAI_CONVERSION_MARKS,
     ENVELOPE_KEYS,
+    coreai_runtime_test,
     det_model_file,
     relu_model_file,
-    requires_coreai_runtime,
 )
+
+pytestmark = [*COREAI_CONVERSION_MARKS]
 
 _mcp_memory = pytest.importorskip("mcp.shared.memory")
 connect = _mcp_memory.create_connected_server_and_client_session
@@ -156,7 +159,7 @@ async def test_envelope_parity_with_cli_json(tmp_path, capsys):
     assert mcp_env == cli_env
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_convert_model_end_to_end(tmp_path):
     # Proves the asyncio.run-in-worker-thread design: the precision check
     # inside _run_convert calls asyncio.run, which would crash on the MCP
@@ -174,7 +177,7 @@ async def test_convert_model_end_to_end(tmp_path):
     assert out_path.exists()
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_model_end_to_end(tmp_path):
     from coreai_onnx._cli import main as cli_main
 

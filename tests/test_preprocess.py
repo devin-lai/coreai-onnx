@@ -20,7 +20,7 @@ from coreai_onnx._passes import (
     remove_identity,
 )
 
-from .helpers import assert_parity, requires_coreai_runtime, run_onnxruntime
+from .helpers import assert_parity, coreai_runtime_test, coreai_test, run_onnxruntime
 
 
 def _model(nodes, inputs, outputs, initializers=(), opset=22):
@@ -734,6 +734,7 @@ def test_preprocess_folds_and_prunes_if_branch_initializers_recursively():
     np.testing.assert_array_equal(numpy_helper.to_array(bias), [4.0, 6.0])
 
 
+@coreai_test
 @pytest.mark.ir
 def test_converter_pipeline_uses_recursive_branch_cleanup():
     import coreai_onnx
@@ -861,7 +862,7 @@ def test_preprocess_rejects_group_normalization_with_mismatched_param_shape():
         preprocess(m)
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_group_normalization_opset18():
     m = _gn18_model()
     x = np.random.default_rng(1).standard_normal((2, 6, 4, 4)).astype(np.float32)

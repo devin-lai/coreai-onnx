@@ -15,6 +15,10 @@ from coreai_onnx._type_mapping import (
 )
 from coreai_onnx.converter import Context
 
+from .helpers import COREAI_CONVERSION_MARKS
+
+pytestmark = [*COREAI_CONVERSION_MARKS]
+
 
 @pytest.fixture
 def ctx():

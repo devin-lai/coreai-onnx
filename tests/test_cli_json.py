@@ -13,12 +13,15 @@ import onnx
 
 from coreai_onnx._cli import main
 from tests.helpers import (
+    COREAI_CONVERSION_MARKS,
     ENVELOPE_KEYS,
+    coreai_runtime_test,
     det_model_file,
     relu_model_file,
-    requires_coreai_runtime,
     single_op_model,
 )
+
+pytestmark = [*COREAI_CONVERSION_MARKS]
 
 
 def _reject_nonfinite(token: str) -> float:
@@ -260,7 +263,7 @@ def test_convert_json_validation_failure(tmp_path, capsys, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_success(tmp_path, capsys):
     out_path = tmp_path / "out.aimodel"
     rc, env = _run_json(
@@ -291,7 +294,7 @@ def test_convert_json_success(tmp_path, capsys):
     )
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_reference_nonfinite_warning(tmp_path, capsys):
     """A model that produces NaN on the probe input (Sqrt of a negative) gets
     a reference_nonfinite warning; matching NaN positions still pass."""
@@ -310,7 +313,7 @@ def test_convert_json_reference_nonfinite_warning(tmp_path, capsys):
     assert outs[0]["passed"] is True
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_min_psnr_recorded_and_passed_through(tmp_path, capsys):
     out_path = tmp_path / "out.aimodel"
     rc, env = _run_json(
@@ -329,7 +332,7 @@ def test_convert_json_min_psnr_recorded_and_passed_through(tmp_path, capsys):
     assert env["result"]["precision"]["min_psnr"] == 40.0
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_compute_unit_cpu_only(tmp_path, capsys):
     out_path = tmp_path / "out.aimodel"
     rc, env = _run_json(
@@ -349,7 +352,7 @@ def test_convert_json_compute_unit_cpu_only(tmp_path, capsys):
     assert env["result"]["precision"]["passed"] is True
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_overwrites_existing_aimodel(tmp_path, capsys):
     """Re-converting to the same output path must succeed: the previous
     .aimodel bundle is replaced (save_asset itself cannot overwrite)."""
@@ -410,7 +413,7 @@ def test_convert_json_ort_missing_warning(tmp_path, capsys, monkeypatch):
     assert "onnxruntime_missing" in codes
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_precision_failure_exits_3(tmp_path, capsys, monkeypatch):
     import coreai_onnx
     from coreai_onnx import OutputReport, VerifyReport
@@ -442,7 +445,7 @@ def test_convert_json_precision_failure_exits_3(tmp_path, capsys, monkeypatch):
     assert out_path.exists()
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_precision_error_exits_3(tmp_path, capsys, monkeypatch):
     import coreai_onnx
 
@@ -533,7 +536,7 @@ def test_verify_json_non_darwin_platform_unsupported(tmp_path, capsys, monkeypat
     assert env["result"] is None
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_verify_json_pass_and_inf_psnr(tmp_path, capsys):
     # Convert first (quietly), then verify via JSON. A Relu on zeros gives an
     # exact match, so PSNR is infinite and must serialize as the string "inf".
@@ -553,7 +556,7 @@ def test_verify_json_pass_and_inf_psnr(tmp_path, capsys):
         assert o["psnr"] == "inf" or isinstance(o["psnr"], float)
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_verify_json_failure_exits_1_with_result(tmp_path, capsys, monkeypatch):
     import coreai_onnx
     from coreai_onnx import OutputReport, VerifyReport
@@ -708,7 +711,7 @@ def test_verify_json_missing_file_is_io_error(tmp_path, capsys, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_json_platform_no_runtime_warning(tmp_path, capsys, monkeypatch):
     import coreai_onnx._service as _service
 

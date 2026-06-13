@@ -11,10 +11,17 @@ from onnx import TensorProto, helper
 import coreai_onnx
 from coreai_onnx import ConversionError, UnsupportedOpError
 
-from .helpers import assert_parity, requires_coreai_runtime, single_op_model
+from .helpers import (
+    COREAI_CONVERSION_MARKS,
+    assert_parity,
+    coreai_runtime_test,
+    single_op_model,
+)
+
+pytestmark = [*COREAI_CONVERSION_MARKS]
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_add_parity() -> None:
     model = single_op_model(
         "Add",
@@ -32,7 +39,7 @@ async def test_add_parity() -> None:
     )
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_add_with_initializer() -> None:
     rng = np.random.default_rng(0)
     model = single_op_model(

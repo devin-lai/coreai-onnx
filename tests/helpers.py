@@ -35,6 +35,24 @@ requires_coreai_runtime = pytest.mark.skipif(
     not _has_coreai_runtime(),
     reason="executing .aimodel requires macOS 27+ with the Core AI runtime",
 )
+COREAI_CONVERSION_MARKS = (pytest.mark.apple, pytest.mark.coreai)
+COREAI_RUNTIME_MARKS = (
+    *COREAI_CONVERSION_MARKS,
+    pytest.mark.requires_macos27,
+    pytest.mark.integration,
+)
+
+
+def coreai_test(obj):
+    for mark in COREAI_CONVERSION_MARKS:
+        obj = mark(obj)
+    return obj
+
+
+def coreai_runtime_test(obj):
+    for mark in COREAI_RUNTIME_MARKS:
+        obj = mark(obj)
+    return requires_coreai_runtime(obj)
 
 _TEST_COMPUTE_UNIT = os.environ.get("COREAI_ONNX_TEST_COMPUTE_UNIT")
 _COREAI_RUNTIME_LOCK_PATH = Path(tempfile.gettempdir()) / "coreai_onnx_runtime.lock"

@@ -18,7 +18,7 @@ from coreai_onnx._repair._strategies import STRATEGIES
 
 from .helpers import (
     assert_parity,
-    requires_coreai_runtime,
+    coreai_runtime_test,
     run_onnxruntime,
     single_op_model,
 )
@@ -101,7 +101,7 @@ def test_strategies_are_well_formed():
         assert callable(s.apply)
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_repaired_fp16_model_converts_and_runs_on_core_ai():
     """End-to-end: a float16 model the Core AI runtime cannot load is repaired,
     then converts and runs with parity vs ONNX Runtime."""

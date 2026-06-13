@@ -16,9 +16,9 @@ import numpy as np
 import pytest
 from onnx import TensorProto, helper, numpy_helper
 
-from .helpers import assert_parity, requires_coreai_runtime
+from .helpers import COREAI_RUNTIME_MARKS, assert_parity, requires_coreai_runtime
 
-pytestmark = [pytest.mark.ops, requires_coreai_runtime]
+pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 
 def _seed(key: str) -> int:

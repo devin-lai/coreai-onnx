@@ -10,10 +10,12 @@ import onnx
 
 import coreai_onnx
 
-from .helpers import requires_coreai_runtime, single_op_model
+from .helpers import COREAI_CONVERSION_MARKS, coreai_runtime_test, single_op_model
+
+pytestmark = [*COREAI_CONVERSION_MARKS]
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_convert_one_liner(tmp_path):
     """convert() wraps OnnxConverter end-to-end; asset file is created."""
     x = np.random.default_rng(0).random((3, 4)).astype(np.float32)
@@ -39,7 +41,7 @@ def test_convert_accepts_path(tmp_path):
     assert program is not None
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_convert_forwards_kwargs(tmp_path):
     """output_names override propagates: output dict key matches the renamed name."""
     from coreai.runtime import NDArray

@@ -9,13 +9,14 @@ import numpy as np
 import pytest
 
 from .helpers import (
+    COREAI_RUNTIME_MARKS,
     assert_parity,
     requires_coreai_runtime,
     single_op_model,
     skip_on_compute_unit,
 )
 
-pytestmark = [pytest.mark.ops, requires_coreai_runtime]
+pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 BINARY_FLOAT = ["Add", "Sub", "Mul", "Div", "Pow", "Min", "Max"]
 COMPARE = ["Equal", "Greater", "GreaterOrEqual", "Less", "LessOrEqual"]
