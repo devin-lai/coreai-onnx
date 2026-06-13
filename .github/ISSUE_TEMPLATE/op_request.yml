@@ -1,0 +1,58 @@
+name: Op lowering request
+description: Request support for an ONNX operator that coreai-onnx does not yet convert
+title: "op request: "
+labels:
+  - op-request
+body:
+  - type: input
+    id: op
+    attributes:
+      label: ONNX op
+      description: Include the domain for custom-domain ops, for example `com.example::MyOp`.
+      placeholder: Det
+    validations:
+      required: true
+  - type: textarea
+    id: model-source
+    attributes:
+      label: Model source
+      description: Link to Hugging Face, ONNX Model Zoo, paper, exporter, or another source.
+    validations:
+      required: true
+  - type: textarea
+    id: inspect-output
+    attributes:
+      label: "`coreai-onnx inspect --json` output"
+      description: Paste the full JSON envelope if possible.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: opset
+    attributes:
+      label: Opset version
+      placeholder: "17"
+    validations:
+      required: true
+  - type: textarea
+    id: shapes-and-attrs
+    attributes:
+      label: Shapes and attributes
+      description: Include representative input/output ranks, dtypes, static/dynamic dims, and op attributes.
+    validations:
+      required: true
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Describe the model family and deployment target.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I checked the supported ops table in the docs.
+          required: true
+        - label: I can provide a minimal ONNX reproducer if the full model is private.

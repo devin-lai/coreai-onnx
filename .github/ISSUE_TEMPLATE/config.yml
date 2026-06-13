@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://devin-lai.github.io/coreai-onnx/
+    about: Read the CLI, MCP, supported-op, and custom-lowering docs.
+  - name: Security reports
+    url: https://github.com/devin-lai/coreai-onnx/security/policy
+    about: Report vulnerabilities privately instead of opening a public issue.

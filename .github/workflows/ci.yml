@@ -1,0 +1,117 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# NOTE: macOS GitHub-hosted runners may be older than macOS 27, which is required
+# for the Core AI runtime. Tests guarded by `requires_coreai_runtime` will be
+# skipped or fail silently on those runners. Add a runtime-availability probe
+# (e.g. check for the presence of the Core AI framework dylib) to the
+# requires_coreai_runtime marker in tests/helpers.py if runner images are upgraded
+# to macOS 27 and runtime-executing tests should run in CI.
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pre-commit run --all-files
+      - run: vulture src/coreai_onnx tests --min-confidence 80
+      # docs/coverage.md is generated from the live lowering registry;
+      # regenerating must be a no-op or the table has drifted from the code.
+      # (coreai-core publishes linux wheels, so the package imports here.)
+      - run: python tools/gen_coverage_table.py && git diff --exit-code docs/coverage.md
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install build twine
+      - run: python -m build --sdist --wheel
+      - run: twine check dist/*
+      - run: python -m pip install dist/*.whl
+      - run: coreai-onnx schema --json > /tmp/coreai-onnx-schema.json
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[test]"
+      # Run coverage serially: xdist plus Core AI runtime execution can race in
+      # the runtime cache on macOS, while Linux skips runtime-only tests.
+      - run: pytest -m "not slow" --cov=coreai_onnx --cov-report=term-missing --cov-report=xml
+
+  test-macos:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[test,dev]"
+      # mypy runs here, not in the ubuntu lint job: with the real
+      # dependencies (numpy/onnx stubs, coreai-core) installed the check is
+      # meaningful; without them --ignore-missing-imports degrades everything
+      # imported to Any.
+      - run: mypy --ignore-missing-imports src/coreai_onnx
+      # Run runtime-executing tests serially. Core AI's process-external
+      # specialization cache is not stable under multi-process xdist loads.
+      - run: pytest -m "not slow"
+
+  test-macos-slow:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[test]"
+      - run: pytest -m "slow"
+
+  coreai-latest-canary:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[test]" && pip install -U --pre coreai-core
+      - run: pytest -m "not slow"

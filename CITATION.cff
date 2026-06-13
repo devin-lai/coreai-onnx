@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use coreai-onnx, please cite it and link back to the project."
+title: coreai-onnx
+abstract: "Convert ONNX models to Apple Core AI (.aimodel) — validated, precision-checked, agent-friendly."
+type: software
+authors:
+  - given-names: Devin
+    family-names: Lai
+    alias: devin-lai
+repository-code: "https://github.com/devin-lai/coreai-onnx"
+url: "https://github.com/devin-lai/coreai-onnx"
+license: BSD-3-Clause
+version: 1.0.0
+date-released: "2026-06-13"
+keywords:
+  - onnx
+  - core-ai
+  - coreai
+  - aimodel
+  - apple
+  - model-conversion

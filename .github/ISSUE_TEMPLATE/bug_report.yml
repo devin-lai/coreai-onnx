@@ -1,0 +1,72 @@
+name: Bug report
+description: A conversion, verification, CLI, or MCP behavior that looks wrong
+title: "bug: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For precision failures, first check whether the issue is benign
+        accumulation noise or a compute-unit difference. The CLI docs cover
+        `--min-psnr`, `--compute-unit cpu_only`, and known ONNX Runtime
+        reference pitfalls.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Conversion
+        - Verification / precision
+        - CLI JSON contract
+        - MCP server
+        - Packaging / installation
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and why it looks wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Include the minimal ONNX graph/model, command or API call, and full output.
+      placeholder: |
+        coreai-onnx inspect model.onnx --json
+        coreai-onnx convert model.onnx -o model.aimodel --json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Versions matter for CoreAI, ONNX, ONNX Runtime, and macOS runtime behavior.
+      value: |
+        - coreai-onnx version:
+        - coreai-core version:
+        - onnx version:
+        - onnxruntime version:
+        - Python version:
+        - OS and architecture:
+        - macOS version and chip, if using Core AI runtime:
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I included `--json` output when reporting CLI behavior.
+        - label: I can share the model or a minimal reproducer.
+        - label: For precision issues, I tried or considered `--compute-unit cpu_only`.

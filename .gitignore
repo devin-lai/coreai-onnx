@@ -1,0 +1,24 @@
+__pycache__/
+.DS_Store
+*.egg-info/
+.venv/
+dist/
+build/
+*.aimodel/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+docs/_build/
+docs/superpowers/
+.claude/
+.hypothesis/
+
+# scratch debug artifacts and ad-hoc lockfiles (project tooling is pip)
+tmp_*/
+/*.onnx
+uv.lock

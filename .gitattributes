@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+*.onnx binary
+*.aimodel/** binary
+*.mlirb binary
+
+*.gif binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.png binary
+*.tar binary
+*.gz binary
+*.whl binary
+*.zip binary

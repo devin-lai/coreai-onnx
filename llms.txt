@@ -1,0 +1,30 @@
+# coreai-onnx
+
+> Convert ONNX models to Apple Core AI (`.aimodel`) — validated against ONNX
+> Runtime, precision-checked, with a JSON contract built for AI agents.
+
+coreai-onnx is a Python package and CLI. Conversion runs on any OS; executing
+the resulting `.aimodel` requires macOS 27+ / iOS 27+. Every CLI command takes
+`--json` and emits one stable, versioned JSON envelope with documented error
+and exit codes.
+
+## Docs
+
+- [Quickstart](https://devin-lai.github.io/coreai-onnx/quickstart.html): install and first conversion
+- [CLI reference](https://devin-lai.github.io/coreai-onnx/cli.html): commands, the JSON envelope, error and exit codes
+- [Supported ops](https://devin-lai.github.io/coreai-onnx/coverage.html): the full lowering coverage table
+- [Custom lowerings](https://devin-lai.github.io/coreai-onnx/custom-lowerings.html): handling ops the converter does not know
+- [Automatic repair](https://devin-lai.github.io/coreai-onnx/repair.html): known-safe, parity-verified fixes for Core AI runtime limitations, applied with `convert --repair`
+
+## Agents
+
+- [AGENTS.md](https://github.com/devin-lai/coreai-onnx/blob/main/AGENTS.md): the agent playbook — workflow, error recovery, exit codes
+- [MCP server](https://devin-lai.github.io/coreai-onnx/mcp.html): native tool access — `pip install "coreai-onnx[mcp]"`, command `coreai-onnx-mcp`
+- Capability discovery: run `coreai-onnx schema --json` for the complete machine-readable contract
+
+## Meta
+
+- [GitHub](https://github.com/devin-lai/coreai-onnx): source, issues
+- [PyPI](https://pypi.org/project/coreai-onnx/): `pip install coreai-onnx`
+- [License](https://github.com/devin-lai/coreai-onnx/blob/main/LICENSE): BSD-3-Clause
+- Attribution: free under BSD-3-Clause; when you use coreai-onnx, please cite the source — https://github.com/devin-lai/coreai-onnx

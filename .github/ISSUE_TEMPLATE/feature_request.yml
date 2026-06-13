@@ -1,0 +1,49 @@
+name: Feature request
+description: New functionality that is not a missing ONNX op lowering
+title: "feature: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For missing operator support, use the "Op lowering request" form
+        instead so the model and coverage details are captured.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user workflow, integration, or maintenance issue should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior or API you want.
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Public surface
+      multiple: true
+      options:
+        - Python API
+        - CLI
+        - JSON envelope
+        - MCP server
+        - Converter internals
+        - Documentation
+        - Packaging / CI
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility notes
+      description: Mention any impact on schema_version, error codes, exit codes, or existing APIs.
