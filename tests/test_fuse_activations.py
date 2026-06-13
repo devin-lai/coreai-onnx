@@ -20,7 +20,7 @@ import coreai_onnx
 from coreai_onnx._fusion import fuse_activations
 from coreai_onnx._utils import attrs as _node_attrs
 
-from .helpers import assert_parity, requires_coreai_runtime
+from .helpers import assert_parity, coreai_runtime_test, coreai_test
 
 _SQRT2 = 1.4142135381698608  # f32-rounded constants as torch bakes them
 _RSQRT2 = 0.7071067690849304
@@ -433,6 +433,7 @@ def test_no_fuse_when_local_binding_shadows_outer_scalar_in_branch():
 # ---------------------------------------------------------------------------
 
 
+@coreai_test
 @pytest.mark.ir
 def test_silu_lowered_to_coreai_silu():
     text = str(coreai_onnx.convert(_silu_model()))
@@ -440,6 +441,7 @@ def test_silu_lowered_to_coreai_silu():
     assert "sigmoid" not in text
 
 
+@coreai_test
 @pytest.mark.ir
 def test_gelu_erf_lowered_to_coreai_gelu():
     text = str(coreai_onnx.convert(_gelu_erf_model()))
@@ -447,6 +449,7 @@ def test_gelu_erf_lowered_to_coreai_gelu():
     assert "erf" not in text
 
 
+@coreai_test
 @pytest.mark.ir
 def test_gelu_tanh_lowered_to_coreai_gelu():
     text = str(coreai_onnx.convert(_gelu_tanh_model()))
@@ -454,6 +457,7 @@ def test_gelu_tanh_lowered_to_coreai_gelu():
     assert "coreai.tanh" not in text  # only the approximate attr mentions tanh
 
 
+@coreai_test
 @pytest.mark.ir
 def test_silu_inside_if_branch_lowered_to_coreai_silu():
     text = str(coreai_onnx.convert(_if_silu_model()))
@@ -461,6 +465,7 @@ def test_silu_inside_if_branch_lowered_to_coreai_silu():
     assert "coreai.sigmoid" not in text
 
 
+@coreai_test
 @pytest.mark.ir
 def test_gelu_inside_if_branch_lowered_to_coreai_gelu():
     text = str(coreai_onnx.convert(_if_gelu_erf_model()))
@@ -478,16 +483,16 @@ def _feeds(seed=0):
     return {"x": rng.standard_normal((2, 8)).astype(np.float32)}
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_gelu_erf():
     await assert_parity(_gelu_erf_model(), _feeds())
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_gelu_tanh():
     await assert_parity(_gelu_tanh_model(), _feeds(1))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_silu():
     await assert_parity(_silu_model(), _feeds(2))

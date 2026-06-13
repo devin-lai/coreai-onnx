@@ -4,11 +4,11 @@
 
 ## Validation
 
-- [ ] `ruff check . && ruff format --check .`
-- [ ] `mypy --ignore-missing-imports src/coreai_onnx`
-- [ ] `pytest -m "not slow"`
-- [ ] `pytest -m "not slow" --cov=coreai_onnx --cov-report=term-missing`
-- [ ] `python -m build --sdist --wheel && twine check dist/*`
+- [ ] `ruff check .`
+- [ ] `python -m compileall src tests`
+- [ ] `pytest -m "not apple and not integration"`
+- [ ] `python -m build && twine check dist/*`
+- [ ] Local Apple Core AI validation completed when conversion/runtime behavior changes
 
 ## Checklist
 

@@ -5,7 +5,8 @@
 
 """MLIR-output tests: assert on the textual IR of converted programs.
 
-These run on any platform — they convert models but never execute them.
+These convert models but never execute them. They are marked out of public CI
+because hosted runners do not provide the required Apple Core AI SDK surface.
 """
 
 import numpy as np
@@ -14,9 +15,9 @@ import pytest
 import coreai_onnx
 from coreai_onnx.errors import UnsupportedOpError
 
-from .helpers import single_op_model
+from .helpers import COREAI_CONVERSION_MARKS, single_op_model
 
-pytestmark = pytest.mark.ir
+pytestmark = [pytest.mark.ir, *COREAI_CONVERSION_MARKS]
 
 
 def test_relu_emits_graph_and_relu():

@@ -12,9 +12,14 @@ import pytest
 import torch
 from torch import nn
 
-from .helpers import assert_parity, requires_coreai_runtime
+from .helpers import COREAI_RUNTIME_MARKS, assert_parity, requires_coreai_runtime
 
-pytestmark = [pytest.mark.e2e, pytest.mark.slow, requires_coreai_runtime]
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.slow,
+    *COREAI_RUNTIME_MARKS,
+    requires_coreai_runtime,
+]
 
 
 def export_to_onnx(module: nn.Module, example: torch.Tensor) -> onnx.ModelProto:

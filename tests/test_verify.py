@@ -20,7 +20,7 @@ from coreai_onnx import (
     verify,
 )
 
-from .helpers import requires_coreai_runtime, single_op_model
+from .helpers import coreai_runtime_test, single_op_model
 
 
 def _sigmoid_model() -> onnx.ModelProto:
@@ -210,7 +210,7 @@ def _save_aimodel(model: onnx.ModelProto, path):
     program.save_asset(path)
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_roundtrip(tmp_path):
     model = _sigmoid_model()
     asset_path = tmp_path / "m.aimodel"
@@ -224,7 +224,7 @@ async def test_verify_roundtrip(tmp_path):
     assert out.psnr > 60 or math.isinf(out.psnr)
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_explicit_inputs(tmp_path):
     model = _sigmoid_model()
     asset_path = tmp_path / "m.aimodel"
@@ -236,7 +236,7 @@ async def test_verify_explicit_inputs(tmp_path):
     assert report.outputs[0].max_abs_error < 1e-4
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_multi_output(tmp_path):
     model = single_op_model(
         "Split",
@@ -281,7 +281,7 @@ def test_compare_explicit_tolerance_overrides_dtype_default():
     assert _compare("y", e, g, 1e-2, 1e-3).passed
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_f16_model_with_default_tolerances(tmp_path):
     model = single_op_model("Floor", {"x": np.zeros((2, 3), dtype=np.float16)})
     asset_path = tmp_path / "m.aimodel"
@@ -377,7 +377,7 @@ def test_compare_min_psnr_does_not_mask_nan_mismatch():
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_compute_unit_cpu_only(tmp_path):
     model = _sigmoid_model()
     asset_path = tmp_path / "m.aimodel"
@@ -397,7 +397,7 @@ async def test_verify_unknown_compute_unit_rejected(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_custom_entrypoint(tmp_path):
     model = _sigmoid_model()
     converter = coreai_onnx.OnnxConverter()
@@ -407,7 +407,7 @@ async def test_verify_custom_entrypoint(tmp_path):
     assert report.passed
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_renamed_outputs(tmp_path):
     model = _sigmoid_model()
     converter = coreai_onnx.OnnxConverter()
@@ -418,7 +418,7 @@ async def test_verify_renamed_outputs(tmp_path):
     assert report.outputs[0].name == "renamed"
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_uint64_input_roundtrip(tmp_path):
     """The feed must be narrowed uint64->uint32 to match the asset's narrowed
     input dtype; otherwise the runtime rejects the uint64 feed."""
@@ -437,7 +437,7 @@ async def test_verify_uint64_input_roundtrip(tmp_path):
     assert report.passed
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_flags_lossy_int64_overflow(tmp_path):
     """A true int64 output exceeding int32 cannot be represented by the int32
     .aimodel; verify must compare against the true onnxruntime output and report
@@ -460,7 +460,7 @@ async def test_verify_flags_lossy_int64_overflow(tmp_path):
     assert report.outputs[0].max_abs_error > 1.0
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_verify_reuses_supplied_expected_outputs(tmp_path, monkeypatch):
     """When ``expected`` is supplied, verify must not re-run ONNX Runtime - the
     convert pipeline relies on this to run ORT exactly once (validate + verify)."""

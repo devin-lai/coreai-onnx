@@ -16,13 +16,14 @@ import coreai_onnx
 from coreai_onnx.errors import ConversionError
 
 from .helpers import (
+    COREAI_RUNTIME_MARKS,
     assert_parity,
     requires_coreai_runtime,
     single_op_model,
     skip_on_compute_unit,
 )
 
-pytestmark = [pytest.mark.ops, requires_coreai_runtime]
+pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 _skip_gpu_const_output = skip_on_compute_unit(
     "gpu",

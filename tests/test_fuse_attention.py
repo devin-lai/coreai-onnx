@@ -22,7 +22,7 @@ from coreai_onnx._fusion import fuse_attention
 from coreai_onnx._utils import attrs as _node_attrs
 from coreai_onnx.errors import ConversionError
 
-from .helpers import assert_parity, requires_coreai_runtime, run_aimodel
+from .helpers import assert_parity, coreai_runtime_test, coreai_test, run_aimodel
 
 # ---------------------------------------------------------------------------
 # Model builders
@@ -423,6 +423,7 @@ def test_overlapping_matches_fuse_only_first():
 
 
 @pytest.mark.ir
+@coreai_test
 def test_composite_declaration_emitted():
     program = coreai_onnx.convert(_yolo_model())
     text = str(program)
@@ -432,6 +433,7 @@ def test_composite_declaration_emitted():
 
 
 @pytest.mark.ir
+@coreai_test
 def test_every_operand_gets_materialization_barrier():
     # GPU/ANE mis-execute or crash on various composite operand producers;
     # each operand must pass through the pad+slice barrier (see
@@ -443,6 +445,7 @@ def test_every_operand_gets_materialization_barrier():
 
 
 @pytest.mark.ir
+@coreai_test
 def test_handwritten_node_rejects_mismatched_head_dims():
     node = helper.make_node(
         "ScaledDotProductAttention", ["q", "k", "v"], ["out"], domain="coreai"
@@ -458,6 +461,7 @@ def test_handwritten_node_rejects_mismatched_head_dims():
 
 
 @pytest.mark.ir
+@coreai_test
 def test_handwritten_node_rejects_rank2():
     node = helper.make_node(
         "ScaledDotProductAttention", ["q", "k", "v"], ["out"], domain="coreai"
@@ -477,38 +481,38 @@ def test_handwritten_node_rejects_rank2():
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_yolo_orientation():
     model = _yolo_model()
     await assert_parity(model, _random_feeds(model))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_standard_with_mask():
     model = _standard_model(mask=True)
     await assert_parity(model, _random_feeds(model))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_rank3():
     model = _standard_model(rank=3)
     await assert_parity(model, _random_feeds(model))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_no_scale():
     model = _standard_model(scale_op=None)
     await assert_parity(model, _random_feeds(model))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_query_dim_larger_than_value_dim():
     # Conditional DETR cross-attention shape (dk > dv): value padded, output sliced.
     model = _standard_model(dk=8, dv=4)
     await assert_parity(model, _random_feeds(model))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_parity_unfused_pattern_still_converts():
     model = _standard_model()
     (softmax,) = [n for n in model.graph.node if n.op_type == "Softmax"]
@@ -516,7 +520,7 @@ async def test_parity_unfused_pattern_still_converts():
     await assert_parity(model, _random_feeds(model))
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 async def test_handwritten_node_parity_with_default_scale():
     B, H, L, S, E = 1, 2, 5, 7, 8
     node = helper.make_node(
@@ -564,7 +568,7 @@ def _dk_gt_dv_expected(feeds):
     return _softmax(s) @ feeds["v"].astype(np.float64)
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 @pytest.mark.parametrize(
     ("build", "expected_fn"),
     [
@@ -623,6 +627,7 @@ async def test_fused_attention_on_every_compute_unit(tmp_path, build, expected_f
 
 
 @pytest.mark.ir
+@coreai_test
 def test_no_fuse_symbolic_mask_dims():
     # A mask with a symbolic dim keeps the chain's inferred shapes static
     # (broadcast against static dims), so it used to fuse — and then the SDPA
@@ -743,7 +748,7 @@ def test_no_fuse_attention_when_local_binding_shadows_outer_scale():
     assert ops == ["MatMul", "Mul", "Softmax", "MatMul"]
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 @pytest.mark.parametrize("cond", [True, False])
 async def test_parity_attention_inside_if_branch(cond):
     model = _if_attention_model()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coreai-onnx"
-dynamic = ["version"]
+version = "1.0.0"
 description = "Convert ONNX models to Apple Core AI (.aimodel) — the AI-first successor to Core ML on iOS 27. Validated, precision-checked, agent-friendly, with automatic float16 repair and an MCP server."
 readme = "README.md"
 license = "BSD-3-Clause"
@@ -30,8 +30,8 @@ classifiers = [
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    # Floor = the version this release is tested against; the
-    # coreai-latest-canary CI job tests upcoming pre-releases continuously.
+    # Floor = the version this release is validated against in the local
+    # macOS 27 + Xcode 27 beta release environment.
     "coreai-core>=1.0.0b1,<2",
     # 1.21 is the floor that carries the external-data path-traversal hardening
     # (canonical-containment + symlink + O_NOFOLLOW checks); the converter loads
@@ -79,9 +79,6 @@ Changelog = "https://github.com/devin-lai/coreai-onnx/blob/main/CHANGELOG.md"
 [tool.setuptools]
 package-dir = { "" = "src" }
 
-[tool.setuptools.dynamic]
-version = { attr = "coreai_onnx.__version__.__version__" }
-
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["coreai_onnx*"]
@@ -96,6 +93,10 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 addopts = ["--tb=short", "-ra"]
 markers = [
+    "apple: Requires Apple Core AI / macOS 27 / Xcode 27 beta",
+    "coreai: Exercises Core AI conversion/compiler/runtime behavior",
+    "requires_macos27: Requires local macOS 27 / Xcode 27 beta",
+    "integration: Integration tests that depend on local Apple SDK/runtime",
     "ops: core operator parity tests",
     "ir: MLIR-output tests (no Core AI runtime needed)",
     "slow: slow tests (deselect with '-m \"not slow\"')",

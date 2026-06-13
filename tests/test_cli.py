@@ -10,10 +10,13 @@ import onnx
 
 from coreai_onnx._cli import main
 from tests.helpers import (
+    COREAI_CONVERSION_MARKS,
+    coreai_runtime_test,
     det_model_file,
     relu_model_file,
-    requires_coreai_runtime,
 )
+
+pytestmark = [*COREAI_CONVERSION_MARKS]
 
 # ---------------------------------------------------------------------------
 # inspect
@@ -40,7 +43,7 @@ def test_inspect_unsupported(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_command(tmp_path, capsys):
     model_path = relu_model_file(tmp_path)
     out_path = str(tmp_path / "out.aimodel")
@@ -117,7 +120,7 @@ def test_convert_overflow_initializer_clean_error(tmp_path, capsys):
     assert "int32" in out
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_loads_model_once(tmp_path, monkeypatch):
     """The success banner must not reload the .onnx from disk a second time."""
     model_path = relu_model_file(tmp_path)
@@ -134,7 +137,7 @@ def test_convert_loads_model_once(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_no_optimize_flag(tmp_path, capsys):
     model_path = relu_model_file(tmp_path)
     out_path = str(tmp_path / "out_noopt.aimodel")
@@ -189,7 +192,7 @@ def test_convert_validation_failure_returns_1(tmp_path, capsys, monkeypatch):
     assert not out_path.exists()
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_no_validate_bypasses_gate(tmp_path, capsys):
     """--no-validate lets an ORT-invalid-but-convertible model through (the gate
     would otherwise reject it at exit 1). --no-verify too, since the same random
@@ -203,7 +206,7 @@ def test_convert_no_validate_bypasses_gate(tmp_path, capsys):
     assert out_path.exists()
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_runs_precision_check(tmp_path, capsys):
     """On macOS with onnxruntime, convert auto-prints the precision comparison."""
     model_path = relu_model_file(tmp_path)
@@ -216,7 +219,7 @@ def test_convert_runs_precision_check(tmp_path, capsys):
     assert "passed" in out.lower()
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_no_verify_skips_precision_check(tmp_path, capsys):
     model_path = relu_model_file(tmp_path)
     out_path = tmp_path / "out.aimodel"
@@ -227,7 +230,7 @@ def test_convert_no_verify_skips_precision_check(tmp_path, capsys):
     assert "PSNR" not in out
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_skips_onnxruntime_steps_when_absent(tmp_path, capsys, monkeypatch):
     """Without onnxruntime, both ORT-dependent steps are skipped with a note and
     conversion still succeeds (exit 0)."""
@@ -244,7 +247,7 @@ def test_convert_skips_onnxruntime_steps_when_absent(tmp_path, capsys, monkeypat
     assert "PSNR" not in out
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_convert_precision_failure_returns_3(tmp_path, capsys, monkeypatch):
     """When the precision check fails tolerance, the .aimodel is still written
     but convert exits 3 (distinct from a conversion failure at exit 1)."""
@@ -271,7 +274,7 @@ def test_convert_precision_failure_returns_3(tmp_path, capsys, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_verify_command(tmp_path, capsys):
     # First convert to produce the .aimodel
     model_path = relu_model_file(tmp_path)
@@ -288,7 +291,7 @@ def test_verify_command(tmp_path, capsys):
     )
 
 
-@requires_coreai_runtime
+@coreai_runtime_test
 def test_verify_name_flag(tmp_path, capsys):
     """convert --name encoder followed by verify --name encoder must pass."""
     model_path = relu_model_file(tmp_path)

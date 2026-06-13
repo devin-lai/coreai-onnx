@@ -10,26 +10,41 @@ pre-commit install
 ## Running tests
 
 ```bash
-pytest -m "not slow"       # all fast tests
-pytest -m ops              # operator parity tests only
-pytest -n auto -m ir       # MLIR-output tests, safe to parallelize
-pytest -m slow             # slow / large-model tests
-pytest -m e2e              # end-to-end model tests
-pytest -m "not slow" --cov=coreai_onnx --cov-report=term-missing
+ruff check .
+python -m compileall src tests
+pytest -m "not apple and not integration"  # public GitHub CI subset
+python -m build
+twine check dist/*
+
+pytest -m apple                 # local Apple Core AI conversion/compiler tests
+pytest -m integration           # local Apple SDK/runtime integration tests
+pytest -m ops                   # operator parity tests only
+pytest -n auto -m ir            # MLIR-output tests, safe to parallelize locally
+pytest -m slow                  # slow / large-model tests
+pytest -m e2e                   # end-to-end model tests
 ```
 
 Keep Core AI runtime-executing tests serial. The native runtime uses
 process-external specialization/cache state and can fail spuriously under
 multi-process xdist loads; plain `pytest` is the source of truth.
 
+Public GitHub CI does not run Core AI conversion, GPU compilation, `.aimodel`
+generation, or Apple SDK integration tests because hosted runners do not provide
+macOS 27 / iOS 27 SDK / Xcode 27 beta. Run those suites locally on a matching
+Apple environment before release work.
+
 **Markers:**
 
 | Marker | Meaning |
 |--------|---------|
-| `ops`  | Core operator parity tests — compare ONNX runtime vs. Core AI output |
-| `ir`   | MLIR-output tests; do not require the Core AI runtime |
-| `slow` | Long-running tests; skipped by default in CI on PRs |
-| `e2e`  | End-to-end model conversion and execution tests |
+| `apple` | Requires Apple Core AI / macOS 27 / Xcode 27 beta |
+| `coreai` | Exercises Core AI conversion/compiler/runtime behavior |
+| `requires_macos27` | Requires local macOS 27 / Xcode 27 beta |
+| `integration` | Integration tests that depend on local Apple SDK/runtime |
+| `ops` | Core operator parity tests that compare ONNX Runtime vs. Core AI output |
+| `ir` | MLIR-output tests |
+| `slow` | Long-running tests |
+| `e2e` | End-to-end model conversion and execution tests |
 
 **Runtime requirement:** op parity and e2e tests require the Core AI runtime, which
 is only available on **macOS 27+**. Tests that need the runtime are guarded by the
@@ -50,7 +65,14 @@ automatically on unsupported platforms.
 
    from .helpers import assert_parity, requires_coreai_runtime, single_op_model
 
-   pytestmark = [pytest.mark.ops, requires_coreai_runtime]
+   pytestmark = [
+       pytest.mark.ops,
+       pytest.mark.apple,
+       pytest.mark.coreai,
+       pytest.mark.requires_macos27,
+       pytest.mark.integration,
+       requires_coreai_runtime,
+   ]
 
 
    async def test_my_op_basic():
@@ -91,12 +113,15 @@ automatically on unsupported platforms.
 5. **Before opening a PR**, run:
 
    ```bash
-   ruff check . && ruff format --check .
-   mypy --ignore-missing-imports src/coreai_onnx
-   pytest -m "not slow"
-   pytest -m "not slow" --cov=coreai_onnx --cov-report=term-missing
-   python -m build --sdist --wheel && twine check dist/*
+   ruff check .
+   python -m compileall src tests
+   pytest -m "not apple and not integration"
+   python -m build && twine check dist/*
    ```
+
+   If the change touches conversion, lowering, compiler, `.aimodel`, or runtime
+   behavior, also run the relevant `apple`/`integration` suite locally on
+   macOS 27 + Xcode 27 beta.
 
 ### Error handling in lowerings
 
@@ -111,11 +136,11 @@ split is deliberate; don't "fix" it.
 - [ ] Failing test added before the fix / feature
 - [ ] Lowering registered in `REGISTRY`
 - [ ] Unsupported combos raise `ValueError` / `ConversionError` with clear message
-- [ ] `ruff check . && ruff format --check .` passes
-- [ ] `mypy --ignore-missing-imports src/coreai_onnx` passes
-- [ ] `pytest -m "not slow"` passes
-- [ ] `pytest -m "not slow" --cov=coreai_onnx --cov-report=term-missing` passes
-- [ ] `python -m build --sdist --wheel && twine check dist/*` passes
+- [ ] `ruff check .` passes
+- [ ] `python -m compileall src tests` passes
+- [ ] `pytest -m "not apple and not integration"` passes
+- [ ] `python -m build && twine check dist/*` passes
+- [ ] Local Apple Core AI validation passes when conversion/runtime behavior changes
 
 ## Known runtime quirks
 

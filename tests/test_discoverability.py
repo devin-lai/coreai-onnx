@@ -112,6 +112,8 @@ def test_pyproject_metadata_complete():
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
     project = data["project"]
     classifiers = project["classifiers"]
+    assert project["name"] == "coreai-onnx"
+    assert project["version"] == "1.0.0"
     assert "Development Status :: 5 - Production/Stable" in classifiers
     assert "Programming Language :: Python :: 3.11" in classifiers
     assert "Programming Language :: Python :: 3.12" in classifiers
@@ -133,6 +135,14 @@ def test_pyproject_metadata_complete():
     assert coverage["run"]["branch"] is True
     assert coverage["run"]["source"] == ["coreai_onnx"]
     assert coverage["report"]["show_missing"] is True
+    markers = data["tool"]["pytest"]["ini_options"]["markers"]
+    assert "apple: Requires Apple Core AI / macOS 27 / Xcode 27 beta" in markers
+    assert "coreai: Exercises Core AI conversion/compiler/runtime behavior" in markers
+    assert "requires_macos27: Requires local macOS 27 / Xcode 27 beta" in markers
+    assert (
+        "integration: Integration tests that depend on local Apple SDK/runtime"
+        in markers
+    )
 
 
 def test_sdist_manifest_includes_project_governance_files():
@@ -161,29 +171,31 @@ def test_repository_has_line_ending_and_binary_attribute_policy():
         assert pattern in text
 
 
-def test_ci_builds_distributions_and_docs_on_prs():
+def test_ci_runs_lightweight_cross_platform_checks_and_docs_on_prs():
     ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text()
     assert "permissions:" in ci
     assert "contents: read" in ci
     assert "concurrency:" in ci
-    assert ci.count("timeout-minutes:") >= 3
-    assert ci.count("cache: pip") >= 3
-    assert ci.count("cache-dependency-path: pyproject.toml") >= 3
-    assert "pre-commit run --all-files" in ci
-    assert "mypy --ignore-missing-imports src/coreai_onnx" in ci
-    assert "pip install ruff" not in ci
-    assert "vulture src/coreai_onnx tests --min-confidence 80" in ci
-    assert "package:" in ci
-    assert "python -m build --sdist --wheel" in ci
+    assert "lightweight:" in ci
+    assert ci.count("timeout-minutes:") == 1
+    assert ci.count("cache: pip") == 1
+    assert ci.count("cache-dependency-path: pyproject.toml") == 1
+    assert "python -m pip install -e \".[test]\" build ruff twine" in ci
+    assert "ruff check ." in ci
+    assert "python -m compileall src tests" in ci
+    assert 'pytest -m "not apple and not integration"' in ci
+    assert "python -m build" in ci
     assert "twine check dist/*" in ci
-    assert "python -m pip install dist/*.whl" in ci
-    assert "coreai-onnx schema --json" in ci
-    assert "coverage:" in ci
-    assert 'pytest -m "not slow" --cov=coreai_onnx' in ci
-    assert 'pytest -m "not slow"' in ci
-    assert "--cov=coreai_onnx" in ci
-    assert "--cov-report=term-missing" in ci
-    assert "--cov-report=xml" in ci
+    assert "pre-commit run --all-files" not in ci
+    assert "mypy --ignore-missing-imports src/coreai_onnx" not in ci
+    assert "vulture src/coreai_onnx tests --min-confidence 80" not in ci
+    assert "python -m pip install dist/*.whl" not in ci
+    assert "coreai-onnx schema --json" not in ci
+    assert "coverage:" not in ci
+    assert 'pytest -m "not slow"' not in ci
+    assert "--cov=coreai_onnx" not in ci
+    assert "--cov-report=term-missing" not in ci
+    assert "--cov-report=xml" not in ci
     assert 'pytest -n auto -m "not slow"' not in ci
     assert 'pytest -n auto -m "slow"' not in ci
     assert "macos-latest" not in ci
@@ -202,10 +214,13 @@ def test_ci_builds_distributions_and_docs_on_prs():
 
 def test_publish_workflow_uses_trusted_publishing_and_validates_artifacts():
     publish = (REPO_ROOT / ".github" / "workflows" / "publish.yml").read_text()
-    # Publishes on GitHub Release, validates the artifacts, then ships via PyPI
-    # Trusted Publishing (OIDC) — never an API token, username, or password.
-    assert "release:" in publish
-    assert "published" in publish
+    # Publishes on v* tag push, validates the artifacts, then ships via PyPI
+    # Trusted Publishing (OIDC) - never an API token, username, or password.
+    assert "push:" in publish
+    assert "tags:" in publish
+    assert '- "v*"' in publish
+    assert "release:" not in publish
+    assert "published" not in publish
     assert "environment:" in publish
     assert "name: pypi" in publish
     assert "id-token: write" in publish
@@ -214,10 +229,11 @@ def test_publish_workflow_uses_trusted_publishing_and_validates_artifacts():
     assert publish.count("timeout-minutes:") >= 2
     assert "cache: pip" in publish
     assert "cache-dependency-path: pyproject.toml" in publish
-    assert "python -m build --sdist --wheel" in publish
+    assert "python -m pip install -U build twine" in publish
+    assert "python -m build" in publish
     assert "twine check dist/*" in publish
-    assert "python -m pip install dist/*.whl" in publish
-    assert "coreai-onnx schema --json" in publish
+    assert "python -m pip install dist/*.whl" not in publish
+    assert "coreai-onnx schema --json" not in publish
     assert "if-no-files-found: error" in publish
     # OIDC only: no secret-based auth may creep into the publish workflow.
     assert "PYPI_TOKEN" not in publish

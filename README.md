@@ -1,6 +1,6 @@
 # coreai-onnx
 
-[![CI](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml/badge.svg)](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml)
+[![Lightweight CI](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml/badge.svg)](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
 [![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/coreai-onnx)](https://pypi.org/project/coreai-onnx/)
@@ -120,6 +120,25 @@ pip install "coreai-onnx[verify]"          # + numerical verification via onnxru
 | Execute `.aimodel` | macOS 27+ / iOS 27+ (Core AI framework) |
 | Verify parity (`verify` subcommand) | macOS 27+ + `onnxruntime` |
 
+## CI scope
+
+Public GitHub CI is intentionally lightweight. GitHub-hosted runners do not
+currently provide the macOS 27 / iOS 27 SDK / Xcode 27 beta environment needed
+to validate Apple Core AI compiler/runtime behavior, so the CI badge covers only
+cross-platform safety checks:
+
+```bash
+ruff check .
+python -m compileall src tests
+pytest -m "not apple and not integration"
+python -m build
+twine check dist/*
+```
+
+Hosted CI does not run real Core AI conversion, GPU compilation, `.aimodel`
+generation, or Apple SDK integration tests. Full Core AI conversion and runtime
+validation must be run locally on macOS 27 + Xcode 27 beta.
+
 ## Ecosystem
 
 | Package | Role |
@@ -146,12 +165,12 @@ the current list, which includes:
 
 ## Versioning and CoreAI compatibility
 
-coreai-onnx depends on `coreai-core>=1.0.0b1,<2`. Each release is tested
-against the floor version in CI; a continuous canary job additionally runs
-the test suite against the latest coreai-core pre-release, so breakage in
-an upcoming CoreAI release is caught before it ships. The CLI JSON
-envelope (`schema_version: 1`), error/warning codes, and exit codes are a
-frozen, append-only contract — see [docs/cli.md](docs/cli.md).
+coreai-onnx depends on `coreai-core>=1.0.0b1,<2`. Public GitHub CI validates the
+linting, packaging, bytecode-compilation, and pure-Python test surface only.
+Release validation against the supported Core AI environment is performed
+locally on macOS 27 + Xcode 27 beta. The CLI JSON envelope
+(`schema_version: 1`), error/warning codes, and exit codes are a frozen,
+append-only contract — see [docs/cli.md](docs/cli.md).
 
 ## Contributing
 

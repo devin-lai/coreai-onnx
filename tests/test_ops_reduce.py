@@ -14,13 +14,14 @@ import coreai_onnx
 from coreai_onnx.errors import ConversionError
 
 from .helpers import (
+    COREAI_RUNTIME_MARKS,
     assert_parity,
     requires_coreai_runtime,
     run_aimodel,
     single_op_model,
 )
 
-pytestmark = [pytest.mark.ops, requires_coreai_runtime]
+pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 
 def _seed(key: str) -> int:
