@@ -6,11 +6,18 @@
 [![PyPI](https://img.shields.io/pypi/v/coreai-onnx?label=pypi&cacheSeconds=300)](https://pypi.org/project/coreai-onnx/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-**The missing ONNX path into Apple's Core AI.**
+**The missing ONNX path into Apple's next-generation Core AI runtime.**
 
-coreai-onnx converts ONNX models directly to the `.aimodel` format consumed by
-Apple's Core AI framework — the AI-first successor to Core ML on iOS 27 and
-macOS 27 — with no manual model surgery and no custom export scripts.
+coreai-onnx converts existing ONNX exports directly into Apple's `.aimodel`
+format, helping teams bring high-performance AI workloads to the full Apple
+ecosystem — macOS, iOS, iPadOS, visionOS, watchOS, and tvOS — without custom
+export scripts or manual graph surgery.
+
+Built for the Core AI era, it pairs a clean conversion pipeline with ONNX
+Runtime validation, numerical precision reports, fused graph optimizations,
+JSON-first CLI output, and MCP automation. Inspect coverage, convert with
+confidence, and help expand the supported-op surface for Apple's newest
+on-device AI stack.
 
 ## Quickstart
 
