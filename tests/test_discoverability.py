@@ -30,6 +30,8 @@ DOCUMENTED_WARNING_CODES = {
     "onnxruntime_missing",
     "platform_no_runtime",
     "reference_nonfinite",
+    "precision_benign_noise",
+    "precision_hardware_divergence",
 }
 DOCUMENTED_EXIT_CODES = {0, 1, 2, 3}
 
@@ -113,7 +115,7 @@ def test_pyproject_metadata_complete():
     project = data["project"]
     classifiers = project["classifiers"]
     assert project["name"] == "coreai-onnx"
-    assert project["version"] == "1.0.0"
+    assert project["version"] == "1.1.0"
     assert "Development Status :: 5 - Production/Stable" in classifiers
     assert "Programming Language :: Python :: 3.11" in classifiers
     assert "Programming Language :: Python :: 3.12" in classifiers

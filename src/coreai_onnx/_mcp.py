@@ -101,13 +101,22 @@ def _build_server():
         safety net that rejects any rewrite that would change results. On
         error.code "precision_check_failed" the .aimodel WAS written — inspect
         result.precision instead of treating it as fatal; on
-        "precision_check_error" the .aimodel was also written but the check
-        itself crashed (result.precision is null — see error.message, or retry
-        with verify_model). rtol/atol of null use per-dtype defaults. min_psnr
-        additionally accepts outputs that fail rtol/atol but reach that PSNR
-        (dB). compute_unit restricts the check to "cpu_only"/"cpu"/"gpu"/"ane"
-        (null: runtime's choice; GPU/ANE run float16, cpu_only is the fp32
-        fidelity check).
+        "precision_check_error" the .aimodel was also written and the
+        conversion is unaffected, but the check could not complete
+        (result.precision is null — see error.message). This includes the
+        native runtime aborting while executing the program on the selected
+        compute unit; that abort is contained (it no longer kills this server),
+        and a plain retry would only repeat it — re-check with
+        compute_unit="cpu_only" (the fp32 fidelity path) instead. rtol/atol of
+        null use per-dtype defaults. By default the verdict measures fp32
+        conversion fidelity: the check runs on the runtime's fast default unit
+        and falls back to cpu_only only on a miss, so float16 GPU/ANE divergence
+        (warning "precision_hardware_divergence") and benign high-PSNR
+        accumulation noise (warning "precision_benign_noise"; floor = min_psnr,
+        default 50 dB) pass instead of failing. result.precision.compute_unit is
+        the effective unit (null = default unit, "cpu_only" = fp32 fallback, or
+        the pinned unit). Pin compute_unit to "cpu_only"/"cpu"/"gpu"/"ane" to
+        make that unit the verdict with no fallback (GPU/ANE run float16).
         """
         # The Namespaces below mirror _cli._build_parser()'s dests AND
         # defaults (name="main", seed=0, repair=False,
@@ -144,11 +153,15 @@ def _build_server():
         Requires macOS 27+ with the Core AI runtime (error.code
         "platform_unsupported" otherwise). Returns the coreai-onnx envelope;
         result.outputs carries per-output max abs/rel error and PSNR (PSNR of
-        infinity serializes as the string "inf"). min_psnr additionally
-        accepts outputs that fail rtol/atol but reach that PSNR (dB).
-        compute_unit restricts execution to "cpu_only"/"cpu"/"gpu"/"ane"
-        (null: runtime's choice; GPU/ANE run float16, cpu_only is the fp32
-        fidelity check).
+        infinity serializes as the string "inf"). The verdict follows the same
+        default-fidelity policy as convert: with no compute_unit it measures the
+        fp32 path (default unit, cpu_only fallback on a miss), demoting float16
+        divergence and benign high-PSNR noise to the warnings
+        "precision_hardware_divergence"/"precision_benign_noise"; min_psnr is the
+        benign floor (default 50 dB). result.compute_unit is the effective unit
+        (null = default unit, "cpu_only" = fp32 fallback, or the pinned unit).
+        Pin compute_unit to "cpu_only"/"cpu"/"gpu"/"ane" for that unit with no
+        fallback (GPU/ANE run float16).
         """
         ns = argparse.Namespace(
             model=model_path,

@@ -55,6 +55,24 @@ _PRECISION_FAILED_HINT = (
     "fidelity. See docs on benign causes."
 )
 
+_PRECISION_ERROR_HINT = (
+    "The .aimodel was written and the conversion is unaffected; only the "
+    "post-conversion check could not complete. If the native runtime aborted "
+    "executing the program on the selected compute unit, re-check with "
+    "`--compute-unit cpu_only` (the fp32 path) rather than retrying as-is."
+)
+
+# Default PSNR floor (dB) for accepting an output that fails the elementwise
+# tolerance as benign accumulation noise, when the caller did not pass an
+# explicit --min-psnr. 50 dB is ~0.3% RMS error: the docs anchor 60 dB as a
+# faithful conversion and 100+ as near-perfect, and across every real-world
+# model we have measured, faithful conversions sit at >=57 dB while genuine
+# lowering bugs land below ~40 dB (and a localized large error drags PSNR down
+# with them), so 50 dB separates the two with margin. Acceptance still requires
+# the non-finite pattern to match the reference (a NaN/Inf divergence is never
+# benign). Tighten or loosen with --min-psnr / --rtol / --atol.
+_DEFAULT_BENIGN_PSNR_DB = 50.0
+
 # ---------------------------------------------------------------------------
 # contract tables + envelope (the frozen schema_version-1 surface)
 # ---------------------------------------------------------------------------
@@ -88,7 +106,9 @@ _ERROR_CODES: dict[str, dict[str, str | None]] = {
         "details": None,
     },
     "precision_check_error": {
-        "meaning": "The precision check could not run.",
+        "meaning": "The precision check could not run (e.g. the Core AI runtime "
+        "aborted executing the .aimodel on the selected compute unit); for "
+        "convert the .aimodel was still written.",
         "details": "exception_type",
     },
     "invalid_model_file": {
@@ -114,6 +134,17 @@ _WARNING_CODES: dict[str, str] = {
     "non-finite values (the input model itself produces NaN/Inf on the random "
     "probe input); parity at those positions is checked by NaN/Inf mask and "
     "the error metrics cover only the finite region.",
+    "precision_benign_noise": "An output failed the elementwise tolerance but "
+    "was accepted as benign accumulation noise: its PSNR is at or above the "
+    "benign floor (default 50 dB; override with --min-psnr) and its non-finite "
+    "pattern matches the reference. The conversion is faithful; tighten with "
+    "--rtol/--atol or --min-psnr to treat such outputs as failures.",
+    "precision_hardware_divergence": "The .aimodel diverged from ONNX Runtime "
+    "(or could not execute) on the runtime's default compute unit, but is "
+    "faithful on the fp32 CPU path - the divergence is float16 GPU/ANE hardware "
+    "behavior, not a conversion error. The verdict reflects the fp32 path; pin "
+    "--compute-unit gpu/ane to inspect the hardware path, or ship the model "
+    "with cpu_only specialization if it needs fp32.",
 }
 
 _EXIT_CODES: dict[int, str] = {
@@ -221,17 +252,22 @@ def _json_float(v: float) -> float | str:
     return "inf" if v > 0 else "-inf"
 
 
-def _verify_result_dict(report, args: argparse.Namespace) -> dict:
-    """Serialize a VerifyReport. rtol/atol/min_psnr/compute_unit are as
-    requested on the command line; null means the default chosen inside
-    verify(). Non-finite metrics (psnr of +/-inf, NaN/Inf error maxima)
-    serialize as strings."""
+def _verify_result_dict(
+    report, args: argparse.Namespace, *, compute_unit: str | None
+) -> dict:
+    """Serialize a VerifyReport. rtol/atol/min_psnr echo what was requested on
+    the command line (null means the default chosen inside verify()).
+    ``compute_unit`` is the *effective* unit that produced this verdict - the
+    explicit --compute-unit, or "cpu_only" when the default check fell back to
+    the fp32 path, or null when the runtime's default unit was authoritative.
+    Non-finite metrics (psnr of +/-inf, NaN/Inf error maxima) serialize as
+    strings."""
     return {
         "passed": report.passed,
         "rtol": _json_float(args.rtol) if args.rtol is not None else None,
         "atol": _json_float(args.atol) if args.atol is not None else None,
         "min_psnr": _json_float(args.min_psnr) if args.min_psnr is not None else None,
-        "compute_unit": args.compute_unit,
+        "compute_unit": compute_unit,
         "seed": args.seed,
         "outputs": [
             {
@@ -259,6 +295,132 @@ def _reference_nonfinite_warning(report) -> dict | None:
         "NaN/Inf on the random probe input; parity at those positions is "
         "checked by NaN/Inf mask",
     )
+
+
+@dataclass
+class _PrecisionCheck:
+    """The authoritative precision verdict plus the unit/warnings that explain it."""
+
+    report: object  # VerifyReport
+    warnings: list[dict]
+    effective_unit: str | None
+    passed: bool
+
+
+def _benign_noise_warning(report) -> dict | None:
+    """Warn when an output passed only via the PSNR floor, not elementwise."""
+    benign = [o.name for o in report.outputs if o.passed and not o.elementwise_passed]
+    if not benign:
+        return None
+    worst = min(
+        o.psnr
+        for o in report.outputs
+        if o.passed and not o.elementwise_passed and math.isfinite(o.psnr)
+    )
+    return _warning(
+        "precision_benign_noise",
+        f"output(s) {', '.join(benign)} failed the elementwise tolerance but "
+        f"were accepted as benign accumulation noise (PSNR ≥ {_DEFAULT_BENIGN_PSNR_DB:g} "
+        f"dB floor; worst {worst:.1f} dB) — the conversion is faithful",
+    )
+
+
+def _hardware_divergence_warning(primary, primary_error: Exception | None) -> dict:
+    """Warn that the default unit diverged but the fp32 verdict is faithful."""
+    if primary_error is not None:
+        detail = (
+            "could not execute on the runtime's default compute unit "
+            f"({type(primary_error).__name__})"
+        )
+    else:
+        failed = ", ".join(o.name for o in primary.outputs if not o.passed)
+        detail = f"diverged from ONNX Runtime on the runtime's default compute unit ({failed})"
+    return _warning(
+        "precision_hardware_divergence",
+        f"the .aimodel {detail}, but is faithful on the fp32 CPU path; the "
+        "divergence is float16 GPU/ANE hardware behavior, not a conversion "
+        "error. The verdict below reflects the fp32 (cpu_only) path.",
+    )
+
+
+def _run_precision_check(
+    model, aimodel_path, args: argparse.Namespace, *, inputs=None, expected=None
+) -> _PrecisionCheck:
+    """Run the post-conversion precision check with the default-verdict policy.
+
+    The verdict measures *conversion fidelity*. With no --compute-unit, the
+    check runs first on the runtime's default unit (fast); on success that is
+    the verdict — the common path, with zero added cost. Only if it fails or the
+    native runtime aborts does it fall back to the deterministic fp32 cpu_only
+    path (slower, so it runs only for the few models that need adjudication). A
+    model faithful on fp32 but divergent on the default float16 GPU/ANE unit
+    passes with a precision_hardware_divergence warning; benign large-magnitude
+    accumulation noise passes via the PSNR floor with a precision_benign_noise
+    warning. An explicit --compute-unit is honored exactly, with no fallback.
+
+    ONNX Runtime runs once: inputs/expected are generated here if not supplied
+    and reused across the primary and fallback runs. Raises (the caller maps it
+    to precision_check_error) when the authoritative run cannot complete.
+    """
+    from . import generate_inputs
+    from . import verify as _verify
+    from ._verify import _run_onnxruntime
+
+    if inputs is None:
+        inputs = generate_inputs(model, seed=args.seed)
+    if expected is None:
+        expected = _run_onnxruntime(model, inputs)
+    floor = args.min_psnr if args.min_psnr is not None else _DEFAULT_BENIGN_PSNR_DB
+
+    def _run(unit: str | None):
+        return asyncio.run(
+            _verify(
+                model,
+                aimodel_path,
+                rtol=args.rtol,
+                atol=args.atol,
+                min_psnr=floor,
+                seed=args.seed,
+                inputs=inputs,
+                expected=expected,
+                entrypoint=args.name,
+                compute_unit=unit,
+                isolate_execution=True,
+            )
+        )
+
+    def _present(*candidates: dict | None) -> list[dict]:
+        return [w for w in candidates if w is not None]
+
+    # An explicit unit is the verdict, as asked — no fallback.
+    if args.compute_unit is not None:
+        report = _run(args.compute_unit)
+        return _PrecisionCheck(
+            report, _present(_benign_noise_warning(report)), args.compute_unit, report.passed
+        )
+
+    # Default: fast path on the runtime's choice; fall back to fp32 only on miss.
+    primary_error: Exception | None = None
+    try:
+        primary = _run(None)
+        if primary.passed:
+            return _PrecisionCheck(
+                primary, _present(_benign_noise_warning(primary)), None, True
+            )
+    except Exception as exc:
+        primary = None
+        primary_error = exc
+
+    fp32 = _run("cpu_only")  # may raise -> precision_check_error
+    if not fp32.passed:
+        return _PrecisionCheck(
+            fp32, _present(_benign_noise_warning(fp32)), "cpu_only", False
+        )
+    warnings = _present(
+        _hardware_divergence_warning(primary, primary_error),
+        _benign_noise_warning(fp32),
+    )
+    return _PrecisionCheck(fp32, warnings, "cpu_only", True)
 
 
 def _run_inspect(args: argparse.Namespace) -> _Outcome:
@@ -391,27 +553,16 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
         )
         return _Outcome(exit_code=0, result=result, warnings=warnings)
 
-    from . import verify as _verify
-
     try:
-        vreport = asyncio.run(
-            _verify(
-                model,
-                out_path,
-                rtol=args.rtol,
-                atol=args.atol,
-                min_psnr=args.min_psnr,
-                seed=args.seed,
-                inputs=inputs,
-                expected=expected,
-                entrypoint=args.name,
-                compute_unit=args.compute_unit,
-            )
+        pc = _run_precision_check(
+            model, out_path, args, inputs=inputs, expected=expected
         )
     except Exception as exc:
         # The asset is on disk and conversion succeeded; the precision check
-        # itself could not complete. Surface it distinctly (exit 3), not as a
-        # conversion failure (exit 1).
+        # itself could not complete - including when the native runtime aborts
+        # executing the program (isolate_execution runs it in a child process so
+        # that abort returns here instead of killing us). Surface it distinctly
+        # (exit 3), not as a conversion failure (exit 1).
         return _Outcome(
             exit_code=3,
             result=result,
@@ -420,14 +571,16 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
                 "precision_check_error",
                 str(exc),
                 details={"exception_type": type(exc).__name__},
+                hint=_PRECISION_ERROR_HINT,
             ),
         )
 
-    nonfinite = _reference_nonfinite_warning(vreport)
+    nonfinite = _reference_nonfinite_warning(pc.report)
     if nonfinite is not None:
         warnings.append(nonfinite)
-    result["precision"] = _verify_result_dict(vreport, args)
-    if vreport.passed:
+    warnings.extend(pc.warnings)
+    result["precision"] = _verify_result_dict(pc.report, args, compute_unit=pc.effective_unit)
+    if pc.passed:
         return _Outcome(exit_code=0, result=result, warnings=warnings)
     return _Outcome(
         exit_code=3,
@@ -586,21 +739,12 @@ def _run_verify(args: argparse.Namespace) -> _Outcome:
             ),
         )
 
-    from . import verify as _verify
-
     try:
-        report = asyncio.run(
-            _verify(
-                args.model,
-                args.aimodel,
-                rtol=args.rtol,
-                atol=args.atol,
-                min_psnr=args.min_psnr,
-                seed=args.seed,
-                entrypoint=args.name,
-                compute_unit=args.compute_unit,
-            )
-        )
+        # onnx.load here (not inside the helper) so a missing/unreadable .onnx
+        # raises OSError that propagates to main() as io_error, rather than
+        # being reclassified as a precision_check_error.
+        model = onnx.load(args.model)
+        pc = _run_precision_check(model, args.aimodel, args)
     except OSError:
         raise
     except Exception as exc:
@@ -610,15 +754,17 @@ def _run_verify(args: argparse.Namespace) -> _Outcome:
                 "precision_check_error",
                 str(exc),
                 details={"exception_type": type(exc).__name__},
+                hint=_PRECISION_ERROR_HINT,
             ),
         )
 
     warnings = []
-    nonfinite = _reference_nonfinite_warning(report)
+    nonfinite = _reference_nonfinite_warning(pc.report)
     if nonfinite is not None:
         warnings.append(nonfinite)
-    result = _verify_result_dict(report, args)
-    if report.passed:
+    warnings.extend(pc.warnings)
+    result = _verify_result_dict(pc.report, args, compute_unit=pc.effective_unit)
+    if pc.passed:
         return _Outcome(exit_code=0, result=result, warnings=warnings)
     return _Outcome(
         exit_code=1,

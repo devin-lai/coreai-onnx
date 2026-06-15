@@ -182,7 +182,7 @@ installed).
 | `conversion_failed` | one lowering failed (`details.node_name`/`op_key` when known, else `details: null`) | report; often a model-specific edge — file an issue with the node |
 | `compiler_failed` | Core AI compiler rejected the program | report the MLIR diagnostic in `message` |
 | `precision_check_failed` | converted, but outputs exceeded tolerance | the `.aimodel` EXISTS; inspect `result.precision` — a high PSNR (> 60 dB) means benign accumulation noise: re-run with `--min-psnr`; a NaN on the default units that disappears with `--compute-unit cpu_only` means the model is float16-unstable on GPU/ANE (conversion itself is correct); otherwise consider `--rtol/--atol`. See docs on benign causes |
-| `precision_check_error` | converted, but the check crashed | the `.aimodel` EXISTS; retry `verify` separately |
+| `precision_check_error` | converted, but the check could not complete (incl. the native runtime aborting on the selected compute unit — contained, not a process crash) | the `.aimodel` EXISTS and the conversion is unaffected; re-check with `--compute-unit cpu_only` (the fp32 path), not a plain retry |
 | `platform_unsupported` | `verify` needs macOS 27+ | run verify on a Mac; conversion output is unaffected |
 
 Warnings: `onnxruntime_missing` (install the `[verify]` extra to enable
@@ -190,7 +190,21 @@ validation), `platform_no_runtime` (precision check skipped off-macOS),
 `reference_nonfinite` (the input model itself produces NaN/Inf on the random
 probe input; parity at those positions is checked by NaN/Inf mask and
 `result.precision.outputs[*].expected_nonfinite` counts them — the conversion
-is fine, the model's numerics on random data are not).
+is fine, the model's numerics on random data are not), `precision_benign_noise`
+(an output failed the elementwise tolerance but was accepted as benign
+accumulation noise at high PSNR — the conversion is faithful;
+`result.precision.passed` is `true`), `precision_hardware_divergence` (the model
+diverged or could not execute on the runtime's default float16 GPU/ANE unit but
+is faithful on fp32; the verdict reflects the fp32 path and
+`result.precision.compute_unit` is `"cpu_only"`).
+
+By default the precision verdict measures fp32 conversion fidelity: the check
+runs on the runtime's fast default unit and, only on a miss, re-runs on
+`cpu_only` for the verdict (so float16-only divergence and benign noise are
+warnings, not failures). `result.precision.compute_unit` is the effective unit
+behind the verdict (`null` = default unit, `"cpu_only"` = fp32 fallback, or the
+unit you pinned). Pass `--compute-unit gpu`/`ane` to make the float16 hardware
+path the verdict (no fallback).
 
 ## Exit codes
 

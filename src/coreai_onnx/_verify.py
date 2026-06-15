@@ -160,6 +160,11 @@ class OutputReport:
     #: input - parity at those positions is checked by mask, and the error
     #: metrics describe only the finite-overlap region.
     expected_nonfinite: int = 0
+    #: Whether the strict elementwise check (allclose / exact for integers)
+    #: passed on its own, before any ``min_psnr`` acceptance. ``passed and not
+    #: elementwise_passed`` means the output was accepted as benign accumulation
+    #: noise via PSNR, not a bit-for-bit match - callers surface that distinctly.
+    elementwise_passed: bool = True
 
 
 @dataclass
@@ -215,7 +220,8 @@ def _compare(
         # signals "zero signal, nonzero noise" rather than a metric failure.
         psnr = float(20 * np.log10(peak / rmse)) if peak > 0 else float("-inf")
     if expected.dtype.kind == "f":
-        passed = bool(np.allclose(got, expected, rtol=rtol, atol=atol, equal_nan=True))
+        elementwise = bool(np.allclose(got, expected, rtol=rtol, atol=atol, equal_nan=True))
+        passed = elementwise
         if not passed and min_psnr is not None:
             # PSNR-based acceptance for outputs whose magnitude spread makes
             # elementwise tolerances unreasonably strict - but never for a
@@ -226,7 +232,8 @@ def _compare(
             )
             passed = nonfinite_match and psnr >= min_psnr
     else:
-        passed = bool(np.array_equal(np.asarray(got), expected))
+        elementwise = bool(np.array_equal(np.asarray(got), expected))
+        passed = elementwise
     return OutputReport(
         name=name,
         max_abs_error=max_abs,
@@ -234,7 +241,47 @@ def _compare(
         psnr=psnr,
         passed=passed,
         expected_nonfinite=expected_nonfinite,
+        elementwise_passed=elementwise,
     )
+
+
+async def _execute_asset(
+    aimodel_path: str | Path,
+    inputs: dict[str, np.ndarray],
+    asset_output_names: Sequence[str],
+    entrypoint: str,
+    compute_unit: str | None,
+) -> dict[str, np.ndarray]:
+    """Load the saved .aimodel and run *entrypoint* once on *inputs*.
+
+    This is the only step of verification that enters the native Core AI
+    runtime. A program the runtime cannot execute on the selected compute unit
+    can *abort the process* here (e.g. an MPSGraph ``IOSurface`` assertion on
+    the GPU path) - an abort no ``try``/``except`` can catch. ``verify`` runs
+    this in-process; the CLI and the long-lived MCP server run it out-of-process
+    (see ``_verify_worker``) so such an abort becomes a structured
+    ``precision_check_error`` instead of killing the caller.
+
+    The feed is narrowed to Core AI's 32-bit representation (int64->int32,
+    uint64->uint32, double->float32) so its dtypes match the asset's narrowed
+    inputs; this reuses the conversion-side policy so the two never drift.
+    Returns ``{asset_output_name: array}``.
+    """
+    from coreai.authoring import AIModelAsset
+    from coreai.runtime import NDArray
+
+    asset = AIModelAsset.load(Path(aimodel_path))
+    # The runtime feed/output types are NDArray | Image; this feed is all
+    # NDArrays and graph outputs are always tensors, hence the cast below.
+    feed: dict[str, NDArray | Image] = {
+        k: NDArray(narrow_array(v, context=f"input '{k}'")) for k, v in inputs.items()
+    }
+    async with asset.executable(_specialization_options(compute_unit)) as ai_model:
+        fn = ai_model.load_function(entrypoint)
+        out = await fn(feed)
+        return {
+            k: np.asarray(cast("NDArray", out[k]).numpy()) for k in asset_output_names
+        }
 
 
 _COMPUTE_UNITS = ("cpu_only", "cpu", "gpu", "ane")
@@ -283,6 +330,7 @@ async def verify(
     entrypoint: str = "main",
     output_names: Sequence[str] | None = None,
     compute_unit: str | None = None,
+    isolate_execution: bool = False,
 ) -> VerifyReport:
     """Compare a saved .aimodel on disk against an onnxruntime reference run.
 
@@ -296,7 +344,11 @@ async def verify(
     already computed (keyed by graph output name) so ONNX Runtime is not re-run;
     when omitted they are computed here from ``inputs``. ``compute_unit``
     selects which units the runtime may use (``cpu_only``/``cpu``/``gpu``/
-    ``ane``; default: runtime's choice).
+    ``ane``; default: runtime's choice). With ``isolate_execution`` the native
+    runtime step runs in a child process so a runtime abort (which no
+    ``try``/``except`` can catch) surfaces as a ``CoreaiOnnxError`` instead of
+    killing this process; the CLI and MCP server enable it so a single bad
+    model cannot take down the tool or the server.
     """
     _specialization_options(compute_unit)  # fail fast on a bad name
     if not isinstance(model, onnx.ModelProto):
@@ -318,24 +370,16 @@ async def verify(
             )
         asset_output_names = list(output_names)
 
-    from coreai.authoring import AIModelAsset
-    from coreai.runtime import NDArray
+    if isolate_execution:
+        from ._verify_worker import run_asset_isolated
 
-    asset = AIModelAsset.load(Path(aimodel_path))
-    # The runtime feed/output types are NDArray | Image; this feed is all
-    # NDArrays and graph outputs are always tensors, hence the cast below.
-    # Narrow the feed to Core AI's 32-bit representation (int64->int32,
-    # uint64->uint32, double->float32) so the dtypes match the asset's narrowed
-    # inputs; reuses the conversion-side policy so the two never drift.
-    feed: dict[str, NDArray | Image] = {
-        k: NDArray(narrow_array(v, context=f"input '{k}'")) for k, v in inputs.items()
-    }
-    async with asset.executable(_specialization_options(compute_unit)) as ai_model:
-        fn = ai_model.load_function(entrypoint)
-        out = await fn(feed)
-        got = {
-            k: np.asarray(cast("NDArray", out[k]).numpy()) for k in asset_output_names
-        }
+        got = run_asset_isolated(
+            aimodel_path, inputs, asset_output_names, entrypoint, compute_unit
+        )
+    else:
+        got = await _execute_asset(
+            aimodel_path, inputs, asset_output_names, entrypoint, compute_unit
+        )
 
     # Compare against the true onnxruntime output (do NOT narrow it): the asset
     # output is already 32-bit, and _compare promotes both to float64 / compares
