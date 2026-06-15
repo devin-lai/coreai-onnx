@@ -222,7 +222,7 @@ and works on any platform).
   "result": {
     "tool": {
       "name": "coreai-onnx",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "schema_version": 1,
       "description": "Convert ONNX models to Apple Core AI (.aimodel) — the AI-first successor to Core ML on iOS 27. Validated, precision-checked, agent-friendly, with automatic float16 repair and an MCP server.",
       "global_options": [
