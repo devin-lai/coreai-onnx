@@ -62,13 +62,15 @@ Options:
   [repair](repair.md))
 - `--rtol` — precision-check relative tolerance (default: `1e-3`, or `1e-2` for float16 outputs)
 - `--atol` — precision-check absolute tolerance (default: `1e-4`, or `1e-3` for float16 outputs)
-- `--min-psnr` — also accept an output that fails `rtol`/`atol` but reaches this
-  PSNR in dB (unset by default; see
+- `--min-psnr` — PSNR (dB) floor below which a `rtol`/`atol` failure is *not*
+  accepted as benign accumulation noise (default: `50`; see
+  [The default precision verdict](#the-default-precision-verdict) and
   [Benign precision-check failures](#benign-precision-check-failures))
-- `--compute-unit` — compute units the precision check may execute on
-  (`cpu_only`, `cpu`, `gpu`, `ane`; default: the runtime's choice). GPU and ANE
+- `--compute-unit` — pin the precision check to a unit (`cpu_only`, `cpu`,
+  `gpu`, `ane`). Default: the verdict measures fp32 fidelity (the check runs on
+  the runtime's choice and falls back to `cpu_only` only on a miss). GPU and ANE
   execute in float16; `cpu_only` is the fp32 path that proves conversion
-  fidelity
+  fidelity. An explicit value is the verdict, with no fallback
 - `--seed` — RNG seed for input generation (default: `0`)
 
 **Sample output:**
@@ -106,37 +108,70 @@ Options:
 
 - `--rtol` — relative tolerance (default: `1e-3`, or `1e-2` for float16 outputs)
 - `--atol` — absolute tolerance (default: `1e-4`, or `1e-3` for float16 outputs)
-- `--min-psnr` — also accept an output that fails `rtol`/`atol` but reaches this
-  PSNR in dB (unset by default)
-- `--compute-unit` — compute units the check may execute on (`cpu_only`,
-  `cpu`, `gpu`, `ane`; default: the runtime's choice)
+- `--min-psnr` — PSNR (dB) floor below which a `rtol`/`atol` failure is *not*
+  accepted as benign accumulation noise (default: `50`)
+- `--compute-unit` — pin the check to a unit (`cpu_only`, `cpu`, `gpu`, `ane`).
+  Default: the verdict measures fp32 fidelity (runs on the runtime's choice,
+  falls back to `cpu_only` only on a miss; an explicit value has no fallback)
 - `--seed` — RNG seed for input generation (default: `0`)
 - `--name` — entrypoint function name used at convert time (default: `main`)
 
 Requires `onnxruntime` and the Core AI runtime (macOS 27+).
 
+(the-default-precision-verdict)=
+### The default precision verdict
+
+The precision check answers one question — *did the conversion preserve the
+model?* — which is a property of the **fp32** computation, not of any one
+hardware unit. So when you do not pass `--compute-unit`, the verdict measures
+conversion fidelity, and two correct-but-divergent cases that used to fail are
+demoted to warnings:
+
+- **float16 hardware divergence.** The runtime executes GPU/ANE in float16, so a
+  model whose intermediates exceed float16 range (or whose program the GPU
+  backend cannot execute at all) can drift, NaN, or abort there while the
+  conversion is exact. When the default-unit run fails or the runtime aborts,
+  the check re-runs on the deterministic fp32 `cpu_only` path; if that passes,
+  the verdict is **pass** with a `precision_hardware_divergence` warning.
+- **Benign accumulation noise.** An output that fails the elementwise tolerance
+  but reaches a high PSNR (≥ 50 dB by default; see below) and matches the
+  reference's non-finite pattern is accepted with a `precision_benign_noise`
+  warning.
+
+For speed, the check runs first on the runtime's default unit (the fast path);
+the fp32 `cpu_only` confirmation runs **only** when that first run does not pass,
+so a passing conversion pays no extra cost. `precision.compute_unit` in the
+envelope is the *effective* unit behind the verdict: `null` when the default
+unit was authoritative, `"cpu_only"` when the fp32 confirmation was, or the unit
+you pinned. An explicit `--compute-unit` is honored exactly, with no fallback —
+pin `gpu`/`ane` to make the float16 hardware path the verdict, or `cpu_only` to
+force the fp32 path.
+
 (benign-precision-check-failures)=
 ### Benign precision-check failures
 
-The default pass criterion is elementwise (`numpy.allclose`). Two classes of
-correct conversions fail it, and the report tells them apart:
+The strict per-element criterion is `numpy.allclose`. Two classes of correct
+conversions fail it elementwise; by default
+([The default precision verdict](#the-default-precision-verdict)) both pass with
+a warning rather than failing, and the report tells them apart:
 
 - **Large-magnitude accumulation noise.** When an output's values span many
   orders of magnitude (some vision encoders reach `1e12` on random probe
   inputs), even fp32-vs-fp32 summation-order differences produce absolute
   errors no sensible `rtol`/`atol` accepts elementwise — while PSNR stays
-  excellent (> 100 dB). That is what `--min-psnr` is for: `--min-psnr 60`
-  accepts an output whose signal-to-noise ratio is at least 60 dB even where
-  the elementwise check fails. As reference points, 60 dB is a faithful
-  conversion; 100+ dB is numerically near-perfect.
+  excellent (> 100 dB). The default `--min-psnr 50` floor accepts these as
+  benign (with a `precision_benign_noise` warning); raise the floor, or set
+  `--rtol`/`--atol`, to treat them as failures. As reference points, 60 dB is a
+  faithful conversion; 100+ dB is numerically near-perfect.
 - **float16 hardware.** The runtime executes GPU/ANE in float16. A model
   whose intermediate values exceed float16 range (or whose divisions flush
   denormal denominators to zero) can drift or produce NaN there even though
-  the conversion is exact — `--compute-unit cpu_only` checks the fp32 CPU
-  path, which isolates conversion fidelity from float16 hardware behavior.
-  If `cpu_only` passes and the default check NaNs, the model needs fp32:
-  ship it with `SpecializationOptions.cpu_only()` (or fix the numerics in
-  the source model, e.g. add an epsilon to unguarded divisions).
+  the conversion is exact. The default verdict already isolates this: it falls
+  back to the fp32 `cpu_only` path and passes with a
+  `precision_hardware_divergence` warning. If the model needs fp32 at runtime,
+  ship it with `SpecializationOptions.cpu_only()` (or fix the numerics in the
+  source model, e.g. add an epsilon to unguarded divisions); pin
+  `--compute-unit gpu`/`ane` to make the float16 path the verdict.
 
 A third case is the model itself producing NaN/Inf on the random probe input
 (e.g. an unguarded `0/0`). The reference and the converted model then both
@@ -267,7 +302,7 @@ passed on the command line; `null` means the default was chosen inside
 | `conversion_failed` | A lowering failed; `details` carries `node_name` and `op_key` when known. |
 | `compiler_failed` | The Core AI compiler failed to optimize or save the program. |
 | `precision_check_failed` | Outputs exceeded tolerance (asset still written for `convert`). |
-| `precision_check_error` | The precision check could not run; `details.exception_type` names the exception. |
+| `precision_check_error` | The precision check could not run; `details.exception_type` names the exception. Includes the native Core AI runtime aborting while executing the `.aimodel` on the selected compute unit (the check runs out-of-process, so that abort is contained, not a process crash) — the `.aimodel` was still written and the conversion is unaffected; re-check with `--compute-unit cpu_only`. |
 | `invalid_model_file` | The file is not a valid ONNX model. |
 | `io_error` | The file could not be read or written. |
 | `platform_unsupported` | `verify` requires macOS 27+ with the Core AI runtime. |
@@ -277,7 +312,12 @@ and precision check skipped), `platform_no_runtime` (not on macOS; precision
 check skipped but `.aimodel` was written), `reference_nonfinite` (the ONNX
 Runtime reference itself contains NaN/Inf on the probe input; parity at those
 positions is checked by mask — see
-[Benign precision-check failures](#benign-precision-check-failures)).
+[Benign precision-check failures](#benign-precision-check-failures)),
+`precision_benign_noise` (an output failed the elementwise tolerance but was
+accepted as benign accumulation noise at high PSNR — the conversion is
+faithful), `precision_hardware_divergence` (the model diverged on the runtime's
+default float16 GPU/ANE unit but is faithful on the fp32 CPU path; the verdict
+reflects fp32 — see [The default precision verdict](#the-default-precision-verdict)).
 
 (exit-codes-stable-all-commands)=
 ### Exit codes (stable, all commands)

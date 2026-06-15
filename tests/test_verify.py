@@ -225,6 +225,20 @@ async def test_verify_roundtrip(tmp_path):
 
 
 @coreai_runtime_test
+async def test_verify_isolated_execution_matches_in_process(tmp_path):
+    """isolate_execution runs the native step in a child process; for a good
+    model the result must be identical to running it in-process."""
+    model = _sigmoid_model()
+    asset_path = tmp_path / "m.aimodel"
+    _save_aimodel(model, asset_path)
+    in_process = await verify(model, asset_path, seed=0, isolate_execution=False)
+    isolated = await verify(model, asset_path, seed=0, isolate_execution=True)
+    assert isolated.passed == in_process.passed
+    assert isolated.outputs[0].max_abs_error == in_process.outputs[0].max_abs_error
+    assert isolated.outputs[0].psnr == in_process.outputs[0].psnr
+
+
+@coreai_runtime_test
 async def test_verify_explicit_inputs(tmp_path):
     model = _sigmoid_model()
     asset_path = tmp_path / "m.aimodel"
