@@ -22,7 +22,7 @@ on-device AI stack.
 ## Architecture
 
 <p align="center">
-  <img src="docs/images/Principle.png" alt="coreai-onnx core architecture schematic: the three entry surfaces over a shared command core, the preprocess-fuse-lower conversion pipeline that emits the .aimodel, and the validation and precision checks that gate it" width="900">
+  <img src="https://raw.githubusercontent.com/devin-lai/coreai-onnx/main/docs/images/Principle.png" alt="coreai-onnx core architecture schematic: the three entry surfaces over a shared command core, the preprocess-fuse-lower conversion pipeline that emits the .aimodel, and the validation and precision checks that gate it" width="900">
 </p>
 
 A high-level map of the conversion path: the three entry surfaces (Python API,
