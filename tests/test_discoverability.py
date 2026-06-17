@@ -115,7 +115,7 @@ def test_pyproject_metadata_complete():
     project = data["project"]
     classifiers = project["classifiers"]
     assert project["name"] == "coreai-onnx"
-    assert project["version"] == "1.1.1"
+    assert project["version"] == "1.1.2"
     assert "Development Status :: 5 - Production/Stable" in classifiers
     assert "Programming Language :: Python :: 3.11" in classifiers
     assert "Programming Language :: Python :: 3.12" in classifiers

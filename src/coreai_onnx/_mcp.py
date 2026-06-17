@@ -24,7 +24,8 @@ from . import _service
 _MCP_HINT = 'the MCP server requires the [mcp] extra: pip install "coreai-onnx[mcp]"'
 
 _INSTRUCTIONS = (
-    "Convert ONNX models to Apple Core AI (.aimodel). All tools return the "
+    "Run coreai-onnx conversion, inspection, verification, and schema commands. "
+    "All tools return the "
     "same JSON envelope as the coreai-onnx CLI's --json mode: "
     "{schema_version, command, status, result, warnings, error}. Branch on "
     "status and error.code (stable, append-only); see AGENTS.md in the "
