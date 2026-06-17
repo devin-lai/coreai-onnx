@@ -366,6 +366,28 @@ def test_convert_json_overwrites_existing_aimodel(tmp_path, capsys):
     assert out_path.exists()
 
 
+@coreai_runtime_test
+def test_convert_stamps_provenance_metadata(tmp_path, capsys):
+    from coreai.authoring import AIModelAsset
+
+    out_path = tmp_path / "out.aimodel"
+    rc, _ = _run_json(
+        ["convert", relu_model_file(tmp_path), "-o", str(out_path), "--json"], capsys
+    )
+    assert rc == 0
+
+    metadata = AIModelAsset.load(out_path).metadata
+    assert metadata.author == "coreai-onnx contributors"
+    assert metadata.license == "BSD-3-Clause"
+    assert metadata.model_description == (
+        "Converted with coreai-onnx: https://github.com/devin-lai/coreai-onnx"
+    )
+    assert metadata.creator_defined_metadata["coreai_onnx.repository"] == (
+        "https://github.com/devin-lai/coreai-onnx"
+    )
+    assert metadata.creator_defined_metadata["coreai_onnx.license"] == "BSD-3-Clause"
+
+
 def test_convert_json_refuses_to_replace_non_aimodel_directory(tmp_path, capsys):
     """An existing output path that is NOT an .aimodel bundle must not be
     deleted; the convert fails with a clear io_error instead."""

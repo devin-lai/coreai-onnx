@@ -355,7 +355,7 @@ class OnnxConverter:
             results = list(cast(Iterable[Value], results))
 
         required = [o for o in node.output if o]
-        if len(results) < len(required):
+        if len(results) != len(required):
             cause = ValueError(
                 f"lowering returned {len(results)} result(s) but node has "
                 f"{len(required)} outputs (op {key})"

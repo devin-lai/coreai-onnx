@@ -176,6 +176,26 @@ def test_result_count_mismatch_raises_conversion_error() -> None:
     assert isinstance(exc_info.value.__cause__, ValueError)
 
 
+def test_result_count_too_many_raises_conversion_error() -> None:
+    """Extra lowering results are reported with node context."""
+    model = _make_two_output_custom_model()
+    converter = coreai_onnx.OnnxConverter()
+
+    from coreai._compiler.dialects import coreai as _coreai
+
+    @converter.register_onnx_lowering("com.example::TwoOut")
+    def lower_two_out(values_map, node, loc):  # pragma: no cover - error path
+        import numpy as _np
+
+        c = _coreai.constant(_np.array([1.0, 2.0], dtype=_np.float32))
+        return [c, c, c]
+
+    converter.add_onnx_model(model)
+    with pytest.raises(ConversionError, match="3 result") as exc_info:
+        converter.to_coreai()
+    assert isinstance(exc_info.value.__cause__, ValueError)
+
+
 def test_lowering_binds_results_to_nonempty_outputs() -> None:
     """A node with a gapped optional output ['A', '', 'C'] whose lowering returns
     one Value per non-empty output must bind A and C. Zipping results against the

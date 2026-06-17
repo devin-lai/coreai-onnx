@@ -461,6 +461,25 @@ def _replace_existing_aimodel(out_path: Path) -> None:
     shutil.rmtree(out_path)
 
 
+# Metadata written into each .aimodel bundle this converter saves.
+_CONVERTER_AUTHOR = "coreai-onnx contributors"
+_CONVERTER_LICENSE = "BSD-3-Clause"
+_CONVERTER_REPO_URL = "https://github.com/devin-lai/coreai-onnx"
+
+
+def _asset_metadata():
+    """Return converter metadata for a saved .aimodel bundle."""
+    from coreai.runtime import AIModelAssetMetadata
+
+    metadata = AIModelAssetMetadata()
+    metadata.author = _CONVERTER_AUTHOR
+    metadata.license = _CONVERTER_LICENSE
+    metadata.model_description = f"Converted with coreai-onnx: {_CONVERTER_REPO_URL}"
+    metadata.set_custom("coreai_onnx.repository", _CONVERTER_REPO_URL)
+    metadata.set_custom("coreai_onnx.license", _CONVERTER_LICENSE)
+    return metadata
+
+
 def _run_convert(args: argparse.Namespace) -> _Outcome:
     from . import convert as _convert
 
@@ -517,7 +536,7 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
     try:
         if not args.no_optimize:
             program.optimize()
-        program.save_asset(out_path)
+        program.save_asset(out_path, metadata=_asset_metadata())
     except Exception as exc:
         return _Outcome(
             exit_code=1,

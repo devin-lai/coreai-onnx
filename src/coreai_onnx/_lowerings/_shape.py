@@ -281,6 +281,13 @@ def replace_split(
                 f"Split: num_outputs={num} exceeds the split axis size ({dim})"
             )
         chunk = -(-dim // num)  # ceil; last chunk gets the remainder (opset 18+)
+        if chunk * (num - 1) >= dim:
+            # Every section must be positive; casting a negative tail to uint32
+            # either overflows or turns into a bogus split size.
+            raise ValueError(
+                f"Split: num_outputs={num} cannot partition the split axis "
+                f"size ({dim}) into positive chunks"
+            )
         sections = np.array([chunk] * (num - 1) + [dim - chunk * (num - 1)], np.uint32)
     results = coreai.split(x, sections, np.int32(axis))
     if isinstance(results, Value):

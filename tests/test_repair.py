@@ -3,12 +3,7 @@
 # Use of this source code is governed by a BSD-3-clause license that can
 # be found in the LICENSE file or at https://opensource.org/licenses/BSD-3-Clause
 
-"""Automatic-repair engine: known-safe rewrites + the parity safety net.
-
-The structural and ONNX-Runtime equivalence tests need no Core AI runtime; the
-end-to-end parity test (the repaired model actually loads and runs on Core AI,
-which the original float16 model cannot) is runtime-gated.
-"""
+"""Tests for automatic conversion repairs."""
 
 import numpy as np
 import onnx
@@ -57,6 +52,39 @@ def test_apply_repairs_promotes_every_float16_to_float32():
     assert records[0].details == {"inputs": ["x"]}
 
 
+def test_apply_repairs_promotes_internal_float16_without_float16_inputs():
+    x = onnx.helper.make_tensor_value_info("x", F32, [2, 3])
+    y = onnx.helper.make_tensor_value_info("y", F32, [2, 3])
+    to_f16 = onnx.helper.make_node("Cast", ["x"], ["h"], to=F16)
+    back = onnx.helper.make_node("Cast", ["h"], ["y"], to=F32)
+    model = onnx.helper.make_model(
+        onnx.helper.make_graph([to_f16, back], "internal_f16", [x], [y]),
+        opset_imports=[onnx.helper.make_opsetid("", 17)],
+    )
+    assert all(vi.type.tensor_type.elem_type != F16 for vi in model.graph.input)
+
+    repaired, records = apply_repairs(model)
+
+    assert len(records) == 1
+    assert records[0].name == "promote_float16_to_float32"
+    assert records[0].details == {"inputs": []}
+    cast_targets = {
+        attr.i
+        for node in repaired.graph.node
+        for attr in node.attribute
+        if attr.name == "to"
+    }
+    assert F16 not in cast_targets
+
+    rng = np.random.default_rng(0)
+    xv = rng.standard_normal((2, 3)).astype(np.float32)
+    expected = run_onnxruntime(model, {"x": xv})[0]
+    got = run_onnxruntime(repaired, {"x": xv})[0]
+    np.testing.assert_allclose(
+        got.astype(np.float64), expected.astype(np.float64), rtol=1e-3, atol=1e-3
+    )
+
+
 def test_apply_repairs_does_not_mutate_input():
     model = _fp16_mul_model()
     repaired, _ = apply_repairs(model)
@@ -97,6 +125,7 @@ def test_strategies_are_well_formed():
     for s in STRATEGIES:
         assert s.name
         assert s.summary
+        assert callable(s.applies)
         assert callable(s.detect)
         assert callable(s.apply)
 
