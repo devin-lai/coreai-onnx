@@ -50,6 +50,31 @@ async def test_add_with_initializer() -> None:
     await assert_parity(model, {"a": rng.random((4,), dtype=np.float32)})
 
 
+def test_resize_output_dim_matches_onnxruntime_float32_rule() -> None:
+    # A scale-based Resize must be sized the way ONNX Runtime sizes it —
+    # int64(float(scale) * dim) in float32 — not with a float64 floor. The two
+    # leading cases are the exact float32 scales from the manis_onnx models that
+    # regressed (c4ba9e7f/de39a4ac upsample 7->15; 8ae68a54/9348eb9c upsample
+    # 43->342); a float64 floor yields 14 and 341 respectively. Remaining cases
+    # cover exact-integer, downscale, and a fractional product that ORT floors
+    # (not rounds). All expected values verified against onnxruntime 1.26.
+    from coreai_onnx._lowerings._norm import _resize_output_dim
+
+    cases = [
+        (7, 2.142857074737549, 15),  # float64 floor -> 14
+        (43, 7.953488349914551, 342),  # float64 floor -> 341
+        (32, 1.0312500000000000, 33),
+        (8, 2.0, 16),  # exact integer scale
+        (8, 0.5, 4),  # downscale
+        (10, 1.06, 10),  # ORT floors the float32 product, does not round to 11
+    ]
+    for in_dim, scale, expected in cases:
+        got = _resize_output_dim(in_dim, scale)
+        assert got == expected, (
+            f"in={in_dim} scale={scale!r}: got {got}, want {expected}"
+        )
+
+
 def test_unsupported_op_aggregated_error() -> None:
     model = single_op_model("Det", {"x": np.eye(3, dtype=np.float32)})
     converter = coreai_onnx.OnnxConverter()

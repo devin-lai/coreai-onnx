@@ -335,6 +335,22 @@ def _optional_nonempty(v: Value | None) -> Value | None:
     return v
 
 
+def _resize_output_dim(in_dim: int, scale: float) -> int:
+    """Output length for a scale-based Resize, matching ONNX Runtime exactly.
+
+    ORT sizes the output in float32 — ``int64_t(float(scale) * dim)`` — not in
+    float64. The float32 product can round *up* to the exact integer (e.g.
+    ``7 * float32(15/7)`` evaluates to ``15.0f``) where the float64 product
+    stays at ``14.9999995`` and a plain ``floor`` would give ``14`` — a 14x14
+    map that then fails to Concat with a 15x15 skip, or mismatches ORT's output
+    shape. Truncating the float32 product reproduces ORT's rule for every case
+    (verified across thousands of random scales); a float64 floor or a fixed
+    epsilon do not. ``scales`` is always float32 per the ONNX spec, so
+    ``np.float32(scale)`` recovers the exact value ORT multiplies with.
+    """
+    return int(np.float32(np.float32(scale) * np.float32(in_dim)))
+
+
 def replace_resize(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
@@ -388,8 +404,8 @@ def replace_resize(
             # Opset 18+: per-axis values are given in the order of `axes`.
             scales = scales[np.argsort(axes)]
         scale_h, scale_w = float(scales[0]), float(scales[1])
-        out_h = int(np.floor(in_h * scale_h))
-        out_w = int(np.floor(in_w * scale_w))
+        out_h = _resize_output_dim(in_h, scale_h)
+        out_w = _resize_output_dim(in_w, scale_w)
     else:
         if sizes_v is None:
             raise ValueError(

@@ -10,8 +10,8 @@ authors:
 repository-code: "https://github.com/devin-lai/coreai-onnx"
 url: "https://github.com/devin-lai/coreai-onnx"
 license: BSD-3-Clause
-version: 1.1.0
-date-released: "2026-06-15"
+version: 1.1.1
+date-released: "2026-06-17"
 keywords:
   - onnx
   - core-ai
