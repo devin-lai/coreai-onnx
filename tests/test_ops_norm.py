@@ -356,6 +356,32 @@ async def test_resize_linear_align_corners():
     await assert_parity(model, {"x": x}, rtol=1e-3, atol=1e-3)
 
 
+async def test_resize_linear_scales_float32_rounding():
+    # Regression (manis_onnx c4ba9e7f / de39a4ac / 8ae68a54 / 9348eb9c): ONNX
+    # Runtime sizes a scale-based Resize in float32 — int64(float(scale) * dim) —
+    # so 7 * float32(15/7) rounds up to 15.0f and truncates to 15. A float64
+    # floor of the same product stays at 14.9999995 and yields 14, producing a
+    # 14x14 map that then fails to Concat with a 15x15 skip (hard conversion
+    # failure) or mismatches ORT's output shape (precision check cannot even
+    # run). The converted output size must match ORT's float32 rule exactly.
+    rng = np.random.default_rng(_seed("resize-linear-scales-f32-rounding"))
+    x = rng.standard_normal((1, 3, 7, 7)).astype(np.float32)
+    scale = np.float32(15.0 / 7.0)  # == 2.142857074737549; 7*scale -> 14.9999995 (f64)
+    model = single_op_model(
+        "Resize",
+        {"x": x},
+        attrs={
+            "mode": "linear",
+            "coordinate_transformation_mode": "pytorch_half_pixel",
+        },
+        initializers={
+            "roi": _EMPTY_ROI,
+            "scales": np.array([1.0, 1.0, scale, scale], dtype=np.float32),
+        },
+    )
+    await assert_parity(model, {"x": x}, rtol=1e-3, atol=1e-3)
+
+
 async def test_resize_linear_sizes():
     rng = np.random.default_rng(_seed("resize-linear-sizes"))
     x = rng.standard_normal((1, 3, 8, 8)).astype(np.float32)
