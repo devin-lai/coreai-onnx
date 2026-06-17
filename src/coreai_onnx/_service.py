@@ -718,10 +718,11 @@ def _run_schema(args: argparse.Namespace) -> _Outcome:
             "version": __version__,
             "schema_version": SCHEMA_VERSION,
             # Kept in sync with pyproject.toml's description by a drift test.
-            "description": "Convert ONNX models to Apple Core AI (.aimodel) "
-            "— the AI-first successor to Core ML on iOS 27. Validated, "
-            "precision-checked, agent-friendly, with automatic float16 repair "
-            "and an MCP server.",
+            "description": (
+                "ONNX conversion tooling for Apple platform runtimes, with "
+                "validation, precision checks, float16 repair, and command/API "
+                "surfaces."
+            ),
             "global_options": global_options,
         },
         "commands": commands,

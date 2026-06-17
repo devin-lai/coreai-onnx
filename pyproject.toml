@@ -4,17 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coreai-onnx"
-version = "1.1.1"
-description = "Convert ONNX models to Apple Core AI (.aimodel) — the AI-first successor to Core ML on iOS 27. Validated, precision-checked, agent-friendly, with automatic float16 repair and an MCP server."
-readme = "README.md"
+version = "1.1.2"
+description = "ONNX conversion tooling for Apple platform runtimes, with validation, precision checks, float16 repair, and command/API surfaces."
+readme = { text = """# coreai-onnx
+
+ONNX conversion tooling for Apple platform runtimes.
+
+Documentation, source, and release notes: https://github.com/devin-lai/coreai-onnx
+""", content-type = "text/markdown" }
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{ name = "devin-lai", email = "markauto75@gmail.com" }]
 keywords = [
-    "onnx", "core-ai", "coreai", "aimodel", "apple", "core-ml",
-    "model-conversion", "machine-learning", "ios", "ios-27", "macos",
-    "neural-engine", "apple-silicon", "on-device", "inference",
-    "mcp", "ai-agents",
+    "onnx", "coreai", "aimodel", "apple", "core-ml",
+    "onnx-conversion", "ios", "ios-27", "macos",
+    "apple-silicon", "on-device", "inference", "mcp",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -24,7 +28,6 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",
     "Typing :: Typed",
 ]

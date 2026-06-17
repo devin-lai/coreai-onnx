@@ -4,6 +4,16 @@ All notable changes to coreai-onnx are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] - 2026-06-17
+
+### Changed
+- Detect float16 use inside graphs before applying repair rewrites.
+- Add provenance metadata when saving bundles.
+- Pin NumPy below the next major release pending validation.
+
+### Fixed
+- Reject invalid split partitions and mismatched lowering result counts.
+
 ## [1.1.1] - 2026-06-17
 
 ### Fixed
@@ -70,6 +80,7 @@ Initial public release.
   plus a portable `skills/onnx-to-coreai` agent skill.
 - Agent docs: AGENTS.md playbook and llms.txt.
 
+[1.1.2]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.2
 [1.1.1]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.1
 [1.1.0]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.0
 [1.0.0]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.0.0
