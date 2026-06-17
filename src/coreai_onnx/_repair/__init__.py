@@ -3,13 +3,7 @@
 # Use of this source code is governed by a BSD-3-clause license that can
 # be found in the LICENSE file or at https://opensource.org/licenses/BSD-3-Clause
 
-"""Automatic, known-safe conversion repairs.
-
-``apply_repairs`` runs every applicable strategy (see ``_strategies``) over a
-copy of the model and reports what it changed. Repairs are semantics-preserving
-by construction; callers re-verify parity against ONNX Runtime before trusting
-a repaired model, so the engine never produces a silently-wrong result.
-"""
+"""Automatic conversion repairs for documented runtime limitations."""
 
 from __future__ import annotations
 
@@ -47,12 +41,12 @@ def apply_repairs(
     repaired.CopyFrom(model)
     records: list[RepairRecord] = []
     for strategy in STRATEGIES:
+        if not strategy.applies(repaired):
+            continue
+        # Record details before the rewrite changes graph input types.
         triggered = strategy.detect(repaired)
-        if triggered:
-            strategy.apply(repaired)
-            records.append(
-                RepairRecord(
-                    strategy.name, strategy.summary, {"inputs": sorted(triggered)}
-                )
-            )
+        strategy.apply(repaired)
+        records.append(
+            RepairRecord(strategy.name, strategy.summary, {"inputs": sorted(triggered)})
+        )
     return repaired, records

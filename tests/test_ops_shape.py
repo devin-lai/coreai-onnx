@@ -285,6 +285,20 @@ def test_split_num_outputs_exceeding_dim_rejected(dim):
         converter.to_coreai()
 
 
+@pytest.mark.parametrize(("dim", "num_outputs"), [(5, 4), (7, 5)])
+def test_split_num_outputs_not_partitionable_rejected(dim, num_outputs):
+    model = single_op_model(
+        "Split",
+        {"x": np.zeros((dim, 2), dtype=np.float32)},
+        n_outputs=num_outputs,
+        attrs={"axis": 0, "num_outputs": num_outputs},
+    )
+    converter = coreai_onnx.OnnxConverter()
+    converter.add_onnx_model(model)
+    with pytest.raises(ConversionError, match="num_outputs"):
+        converter.to_coreai()
+
+
 # ---------------------------------------------------------------------------
 # Slice
 # ---------------------------------------------------------------------------

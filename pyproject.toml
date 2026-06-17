@@ -37,7 +37,8 @@ dependencies = [
     # (canonical-containment + symlink + O_NOFOLLOW checks); the converter loads
     # caller-supplied models, including via the MCP server, so this matters.
     "onnx>=1.21",
-    "numpy",
+    # Match ONNX's floor and keep the next major for an explicit validation pass.
+    "numpy>=1.23.2,<3",
     "rich>=13.0,<16.0",
 ]
 

@@ -3,14 +3,7 @@
 # Use of this source code is governed by a BSD-3-clause license that can
 # be found in the LICENSE file or at https://opensource.org/licenses/BSD-3-Clause
 
-"""Known-safe conversion repairs.
-
-Each strategy is a documented, semantics-preserving ONNX→ONNX rewrite that
-removes a Core AI runtime limitation. Strategies never change results beyond
-the precision of the original dtype; the engine re-verifies parity against
-ONNX Runtime before accepting a repair, so an incomplete rewrite fails closed
-(rejected) rather than producing a wrong model.
-"""
+"""Known-safe ONNX rewrites for Core AI runtime limitations."""
 
 from __future__ import annotations
 
@@ -31,21 +24,49 @@ _F32 = onnx.TensorProto.FLOAT
 class RepairStrategy:
     """One known-safe repair.
 
-    ``detect`` returns the graph-input names that trigger the strategy (empty
-    if it does not apply); ``apply`` performs the in-place rewrite. ``summary``
-    documents the fix for the repair record and the user.
+    ``applies`` decides whether the strategy runs. ``detect`` returns details
+    for the repair record and may be empty even when the rewrite is needed.
     """
 
     name: str
     summary: str
     detect: Callable[[onnx.ModelProto], list[str]]
     apply: Callable[[onnx.ModelProto], None]
+    applies: Callable[[onnx.ModelProto], bool]
 
 
 def _float16_inputs(model: onnx.ModelProto) -> list[str]:
     return [
         vi.name for vi in model.graph.input if vi.type.tensor_type.elem_type == _F16
     ]
+
+
+def _graph_has_float16(graph: onnx.GraphProto) -> bool:
+    """Return whether the graph contains a float16 declaration we can rewrite."""
+    for vi in list(graph.input) + list(graph.output) + list(graph.value_info):
+        if vi.type.tensor_type.elem_type == _F16:
+            return True
+    if any(init.data_type == _F16 for init in graph.initializer):
+        return True
+    for node in graph.node:
+        for attr in node.attribute:
+            if attr.name in ("to", "dtype") and attr.i == _F16:
+                return True
+            if attr.type == onnx.AttributeProto.TENSOR and attr.t.data_type == _F16:
+                return True
+    return False
+
+
+def _has_float16(model: onnx.ModelProto) -> bool:
+    """Return whether any graph or nested subgraph uses float16."""
+    found = False
+
+    def _check(graph: onnx.GraphProto) -> None:
+        nonlocal found
+        found = found or _graph_has_float16(graph)
+
+    apply_graphs_topdown(model.graph, _check)
+    return found
 
 
 def _promote_float16_tensor(tensor: onnx.TensorProto) -> None:
@@ -65,7 +86,7 @@ def _promote_graph_float16(graph: onnx.GraphProto) -> None:
         _promote_float16_tensor(init)
     for node in graph.node:
         for attr in node.attribute:
-            # Cast(to=FLOAT16) / RandomNormal(dtype=FLOAT16) / ... → FLOAT
+            # Cast(to=FLOAT16), RandomNormal(dtype=FLOAT16), etc.
             if attr.name in ("to", "dtype") and attr.i == _F16:
                 attr.i = _F32
             # Constant / ConstantOfShape value tensors
@@ -74,15 +95,7 @@ def _promote_graph_float16(graph: onnx.GraphProto) -> None:
 
 
 def _promote_float16(model: onnx.ModelProto) -> None:
-    """Rewrite a float16 model to float32 throughout (graphs and subgraphs).
-
-    The Core AI runtime cannot load most float16 programs (inputs, arithmetic,
-    conv, matmul, softmax all fail with 'Program load failure 0x10004'). Running
-    the computation in float32 is the documented workaround; float32 is a strict
-    superset of float16, so results match the original within float16 precision.
-    Inputs and outputs become float32. Shapes are re-inferred so downstream
-    passes see consistent types.
-    """
+    """Rewrite float16 declarations to float32 throughout the model."""
     apply_graphs_topdown(model.graph, _promote_graph_float16)
     try:
         inferred = onnx.shape_inference.infer_shapes(model, strict_mode=False)
@@ -99,6 +112,7 @@ PROMOTE_FLOAT16 = RepairStrategy(
     ),
     detect=_float16_inputs,
     apply=_promote_float16,
+    applies=_has_float16,
 )
 
 STRATEGIES: tuple[RepairStrategy, ...] = (PROMOTE_FLOAT16,)
