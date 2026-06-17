@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coreai-onnx"
-version = "1.1.0"
+version = "1.1.1"
 description = "Convert ONNX models to Apple Core AI (.aimodel) — the AI-first successor to Core ML on iOS 27. Validated, precision-checked, agent-friendly, with automatic float16 repair and an MCP server."
 readme = "README.md"
 license = "BSD-3-Clause"

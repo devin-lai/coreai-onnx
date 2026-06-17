@@ -4,6 +4,12 @@ All notable changes to coreai-onnx are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-06-17
+
+### Fixed
+- Match ONNX Runtime's float32 truncation behavior when deriving Resize output
+  dimensions, restoring exact parity across the covered resize cases.
+
 ## [1.1.0] - 2026-06-15
 
 ### Changed
@@ -64,5 +70,6 @@ Initial public release.
   plus a portable `skills/onnx-to-coreai` agent skill.
 - Agent docs: AGENTS.md playbook and llms.txt.
 
+[1.1.1]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.1
 [1.1.0]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.0
 [1.0.0]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.0.0
