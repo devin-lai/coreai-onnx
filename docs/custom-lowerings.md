@@ -91,11 +91,17 @@ def patched_relu(values_map, node, loc):
 All Core AI ops live in `coreai._compiler.dialects.coreai`:
 
 ```python
+import coreai_onnx  # first: see the note below
 from coreai._compiler.dialects import coreai
 ```
 
 Consult the `coreai-core` package for the full op catalogue. The `Value` and
 `Location` types are in `coreai._compiler.ir`.
+
+Import `coreai_onnx` (or `coreai.authoring`) **before** the dialect module. On
+coreai-core 1.0.0b3 the dialect package and `coreai.authoring` import each
+other, and entering that cycle from the dialect side fails with
+`ImportError: cannot import name 'ConstLike' from partially initialized module`.
 
 ## UnsupportedOpError — aggregated report
 

@@ -22,7 +22,13 @@ from coreai_onnx._fusion import fuse_attention
 from coreai_onnx._utils import attrs as _node_attrs
 from coreai_onnx.errors import ConversionError
 
-from .helpers import assert_parity, coreai_runtime_test, coreai_test, run_aimodel
+from .helpers import (
+    assert_parity,
+    coreai_runtime_test,
+    coreai_test,
+    run_aimodel,
+    skip_on_compute_unit,
+)
 
 # ---------------------------------------------------------------------------
 # Model builders
@@ -749,6 +755,13 @@ def test_no_fuse_attention_when_local_binding_shadows_outer_scale():
 
 
 @coreai_runtime_test
+@skip_on_compute_unit(
+    "cpu",
+    "cpu_only",
+    reason="the CPU backend cannot load an SDPA composite nested in coreai.if "
+    "(AIModelError on cpu_only, a segfault on cpu) — upstream runtime bug; "
+    "default/GPU/ANE are correct",
+)
 @pytest.mark.parametrize("cond", [True, False])
 async def test_parity_attention_inside_if_branch(cond):
     model = _if_attention_model()

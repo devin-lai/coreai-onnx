@@ -22,11 +22,14 @@ def convert(
     output_names: Sequence[str] | None = None,
     entrypoint_name: str = "main",
     repair: bool = False,
+    optimize: bool = True,
 ) -> AIProgram:
     """Convert an ONNX model to a Core AI AIProgram.
 
-    Call .optimize() and .save_asset(path) on the result to produce a
-    .aimodel bundle.
+    The returned program is already optimized (Core AI's pre-compilation
+    rewrite has run); call .save_asset(path) on it to produce a .aimodel
+    bundle. Pass ``optimize=False`` to keep the IR as the lowerings emitted
+    it.
 
     With ``repair=True``, known-safe rewrites for documented Core AI runtime
     limitations are applied first (e.g. float16 programs are promoted to
@@ -50,4 +53,4 @@ def convert(
         output_names=output_names,
         entrypoint_name=entrypoint_name,
     )
-    return converter.to_coreai()
+    return converter.to_coreai(optimize=optimize)

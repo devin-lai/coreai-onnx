@@ -94,6 +94,92 @@ async def test_gather_scalar_index():
     await assert_parity(model, {"x": x})
 
 
+async def test_gather_scalar_index_on_vector():
+    # x[i] on a 1-D tensor gives a rank-0 result; emitted naively it aborts
+    # the GPU backend.
+    x = np.array([3.0, -1.0, 4.0, 1.5], dtype=np.float32)
+    model = single_op_model(
+        "Gather", {"x": x}, initializers={"idx": np.array(2, dtype=np.int64)}
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_gather_scalar_from_runtime_shape_feeds_reshape():
+    # tensor.shape[i] in an exported model: Shape -> Gather(scalar) ->
+    # Unsqueeze -> Concat -> Reshape, with the gathered dims dynamic.
+    rng = np.random.default_rng(_seed("gather-shape-scalar"))
+    x = rng.random((3, 8, 5)).astype(np.float32)
+    nodes = [
+        helper.make_node("Shape", ["x"], ["s"]),
+        helper.make_node("Gather", ["s", "i0"], ["n"]),
+        helper.make_node("Gather", ["s", "i1"], ["c"]),
+        helper.make_node("Div", ["c", "two"], ["half"]),
+        helper.make_node("Unsqueeze", ["n", "ax0"], ["n1"]),
+        helper.make_node("Unsqueeze", ["half", "ax0"], ["h1"]),
+        helper.make_node("Concat", ["n1", "h1", "rest"], ["target"], axis=0),
+        helper.make_node("Reshape", ["x", "target"], ["y"]),
+    ]
+    model = _manual_model(
+        nodes,
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, ["n", "c", 5])],
+        ["y"],
+        {
+            "i0": np.array(0, dtype=np.int64),
+            "i1": np.array(1, dtype=np.int64),
+            "two": np.array(2, dtype=np.int64),
+            "ax0": np.array([0], dtype=np.int64),
+            "rest": np.array([-1], dtype=np.int64),
+        },
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_range_over_runtime_dim_as_positions():
+    # arange(seq_len).float() * scale + x — positions built from a dynamic dim.
+    rng = np.random.default_rng(_seed("range-runtime-dim"))
+    x = rng.random((2, 7)).astype(np.float32)
+    nodes = [
+        helper.make_node("Shape", ["x"], ["s"]),
+        helper.make_node("Gather", ["s", "i1"], ["t"]),
+        helper.make_node("Range", ["zero", "t", "one"], ["r"]),
+        helper.make_node("Cast", ["r"], ["rf"], to=TensorProto.FLOAT),
+        helper.make_node("Mul", ["rf", "half"], ["pos"]),
+        helper.make_node("Add", ["x", "pos"], ["y"]),
+    ]
+    model = _manual_model(
+        nodes,
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, "t"])],
+        ["y"],
+        {
+            "i1": np.array(1, dtype=np.int64),
+            "zero": np.array(0, dtype=np.int64),
+            "one": np.array(1, dtype=np.int64),
+            "half": np.array(0.5, dtype=np.float32),
+        },
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_scalar_int64_graph_inputs():
+    # Rank-0 int64 inputs (a step count, a timestep) must survive narrowing
+    # to int32 as tensors on their way into the runtime.
+    model = _manual_model(
+        [helper.make_node("Range", ["start", "limit", "delta"], ["y"])],
+        [
+            helper.make_tensor_value_info("start", TensorProto.INT64, []),
+            helper.make_tensor_value_info("limit", TensorProto.INT64, []),
+            helper.make_tensor_value_info("delta", TensorProto.INT64, []),
+        ],
+        ["y"],
+    )
+    feeds = {
+        "start": np.array(2, dtype=np.int64),
+        "limit": np.array(11, dtype=np.int64),
+        "delta": np.array(3, dtype=np.int64),
+    }
+    await assert_parity(model, feeds)
+
+
 async def test_gather_axis1_scalar_index():
     rng = np.random.default_rng(_seed("gather-axis1-scalar"))
     x = rng.random((3, 4)).astype(np.float32)

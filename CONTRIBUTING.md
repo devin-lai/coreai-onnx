@@ -170,3 +170,24 @@ and leave a comment referencing this list.
 - **`floor_divide` truncates on integers.** Integer floor-division truncates
   toward zero (C semantics) rather than flooring toward negative infinity
   (Python / NumPy semantics). For negative operands the results will differ.
+
+- **Cast pairs that undo each other are fused away.** The pre-compilation
+  rewrite turns float→int32→float into a no-op, and the `cpu_only` backend does
+  the same for any A→B→A pair (int8, bool, ...). Never build truncation or
+  binarization out of a cast round trip — use `floor_divide(x, 1)` / a
+  comparison (see `_trunc_f` and `_cast` in `_lowerings/_common.py`).
+
+- **Integer `divide` is simplified as real division.** Next to constant
+  arithmetic the rewrite reassociates it (`(x / c) * c` → `x`). Build integer
+  quotients from `floor_divide` (`_int_trunc_divide`).
+
+- **Rank-0 `gather_nd` results abort the GPU backend.** Gather one element as a
+  rank-1 result and `shrink_dims` it.
+
+- **The optimizer folds any constant expression, whatever its size.** The
+  converter installs a folding hook (`install_fold_guard` in `_ir.py`) that
+  leaves expansions past `EXPANSION_LIMIT` elements unfolded.
+
+- **`coreai._compiler.dialects.coreai` must not be the first `coreai` import.**
+  On coreai-core 1.0.0b3 it has a circular import with `coreai.authoring`;
+  import `coreai.authoring` (or `coreai_onnx`) first.

@@ -27,6 +27,7 @@ from ._ir import (
     OpResultList,
     Type,
     Value,
+    install_fold_guard,
     program_from_module,
 )
 from ._ir import coreai_dialect as coreai
@@ -96,6 +97,7 @@ class _StagedEntry:
 class OnnxConverter:
     def __init__(self) -> None:
         self.context = Context()
+        install_fold_guard(self.context._mlir_context)
 
         # user defined ONNX op lowerings (reusable across conversions)
         self._user_defined_lowering: dict[str, Callable[..., Any]] = {}
@@ -192,8 +194,13 @@ class OnnxConverter:
         if missing:
             raise UnsupportedOpError(missing)
 
-    def to_coreai(self) -> AIProgram:
-        """Convert all staged ONNX models to a Core AI AIProgram."""
+    def to_coreai(self, *, optimize: bool = True) -> AIProgram:
+        """Convert all staged ONNX models to a Core AI AIProgram.
+
+        The returned program has Core AI's pre-compilation rewrite applied and
+        is ready for ``save_asset``; pass ``optimize=False`` to get the IR
+        exactly as the lowerings emitted it.
+        """
         if not self._staged:
             raise RuntimeError("No models to convert. Call add_onnx_model() first.")
         if self._conversion_started:
@@ -212,7 +219,7 @@ class OnnxConverter:
             with InsertionPoint(module.body):
                 for entry in self._staged:
                     self._emit_graph(entry)
-        return program_from_module(module)
+        return program_from_module(module, optimize=optimize)
 
     def _emit_graph(self, entry: _StagedEntry) -> None:
         graph = entry.model.graph

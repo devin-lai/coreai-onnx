@@ -259,39 +259,60 @@ def replace_dropout(
 # which differs from every ONNX nearest_mode at exact .5 ties (e.g.
 # asymmetric x2); linear because the native resample kernel aborts the
 # process at GPU/ANE compile time in real graphs (see replace_resize).
+#
+# The index math reproduces ONNX Runtime's (upsamplebase.h / upsample.cc),
+# which works in float32. A float64 evaluation lands on the other side of an
+# integer or .5 boundary for a few percent of fractional scales (asymmetric
+# x0.6: 3 / 0.6f is exactly 5.0 in float32 but 4.9999998 in float64) and then
+# picks a different source pixel. Three ORT rules are mirrored on top of that:
+# a dim whose scale is exactly 1 maps index to index, a .5 tie in the rounding
+# nearest modes is detected within a small tolerance, and an output whose
+# shape equals the input's is a plain copy.
 # ---------------------------------------------------------------------------
 
 _COORD_MODES = ("half_pixel", "pytorch_half_pixel", "align_corners", "asymmetric")
+_F32 = np.float32
+# ORT's kNearestModeEps: float division leaves e.g. 4.5f / 0.3f - 0.5f at
+# 14.4999 rather than 14.5, which must still round as a tie.
+_NEAREST_TIE_EPS = _F32(1e-6)
 
 
 def _resize_coords(
     out_len: int, in_len: int, scale: float, coord_mode: str
 ) -> np.ndarray:
-    """ONNX input-space coordinates for each output index (float64)."""
-    i = np.arange(out_len, dtype=np.float64)
+    """ONNX Runtime's input-space coordinate for each output index (float32)."""
+    i = np.arange(out_len, dtype=_F32)
+    s = _F32(scale)
+    if s == 1:
+        return i  # no resampling along this dim, whatever the coordinate mode
+    half = _F32(0.5)
     if coord_mode == "half_pixel":
-        return (i + 0.5) / scale - 0.5
+        return (i + half) / s - half
     if coord_mode == "pytorch_half_pixel":
-        return (i + 0.5) / scale - 0.5 if out_len > 1 else np.zeros(1)
+        return (i + half) / s - half if out_len > 1 else np.zeros(1, dtype=_F32)
     if coord_mode == "align_corners":
         if out_len <= 1:
-            return np.zeros(1)
-        return i * (in_len - 1) / (out_len - 1)
+            return np.zeros(1, dtype=_F32)
+        return i * _F32(in_len - 1) / _F32(out_len - 1)
     if coord_mode != "asymmetric":
         raise ValueError(
             f"Resize: coordinate_transformation_mode '{coord_mode}' is not supported"
         )
-    return i / scale
+    return i / s
 
 
 def _nearest_indices(
     out_len: int, in_len: int, scale: float, coord_mode: str, nearest_mode: str
 ) -> np.ndarray:
     c = _resize_coords(out_len, in_len, scale, coord_mode)
-    if nearest_mode == "round_prefer_floor":
-        idx = np.ceil(c - 0.5)
-    elif nearest_mode == "round_prefer_ceil":
-        idx = np.floor(c + 0.5)
+    if nearest_mode in ("round_prefer_floor", "round_prefer_ceil"):
+        on_tie = np.floor(c) if nearest_mode == "round_prefer_floor" else np.ceil(c)
+        is_tie = np.abs((c - np.floor(c)) - _F32(0.5)) <= _NEAREST_TIE_EPS
+        # Off a tie: round half away from zero (std::round). Done in float64,
+        # where the float32 coordinate and its +0.5 are both exact.
+        wide = c.astype(np.float64)
+        rounded = np.copysign(np.floor(np.abs(wide) + 0.5), wide)
+        idx = np.where(is_tie, on_tie, rounded)
     elif nearest_mode == "floor":
         idx = np.floor(c)
     elif nearest_mode == "ceil":
@@ -304,25 +325,28 @@ def _nearest_indices(
 def _linear_axis_interp(
     x: Value, out_len: int, in_len: int, scale: float, coord_mode: str, axis: int
 ) -> Value:
-    """1-D linear interpolation along *axis* as gather(lo) * (1 - w) + gather(hi) * w.
+    """1-D linear interpolation along *axis* as gather(lo) * w_lo + gather(hi) * w_hi.
 
-    Indices and weights are compile-time constants (ONNX reference semantics:
-    neighbor indices clip to the edges, the fraction comes from the unclipped
-    coordinate, so out-of-range coordinates degenerate to edge replication).
+    Indices and weights are compile-time constants, computed as ONNX Runtime
+    does: the coordinate is clamped to the valid range first (out-of-range
+    coordinates replicate the edge), lo is its integer part and hi the next
+    index, clamped to the last one.
     """
-    c = _resize_coords(out_len, in_len, scale, coord_mode)
-    floor = np.floor(c)
-    lo = np.clip(floor, 0, in_len - 1).astype(np.int32)
-    hi = np.clip(floor + 1, 0, in_len - 1).astype(np.int32)
-    frac = (c - floor).astype(np.float32)
-    if np.all(frac == 0.0) and np.array_equal(lo, hi):
+    c = np.clip(_resize_coords(out_len, in_len, scale, coord_mode), 0, in_len - 1)
+    lo = np.floor(c).astype(np.int32)
+    hi = np.minimum(lo + 1, in_len - 1)
+    w_hi_a = (c - lo).astype(np.float32)
+    w_lo_a = (hi - c).astype(np.float32)
+    # At the last index lo == hi and both distances are 0: the pixel itself.
+    w_lo_a[lo == hi] = 1.0
+    if not w_hi_a.any():
         # Pure index remap (e.g. identity or integer downscale): one gather.
         return _take(x, coreai.constant(lo), axis)
     weight_shape = [1, 1, 1, 1]
     weight_shape[axis] = out_len
     elem_type = tensor_type(x).element_type
-    w_hi = coreai.constant(frac.reshape(weight_shape), dtype=elem_type)
-    w_lo = coreai.constant((1.0 - frac).reshape(weight_shape), dtype=elem_type)
+    w_hi = coreai.constant(w_hi_a.reshape(weight_shape), dtype=elem_type)
+    w_lo = coreai.constant(w_lo_a.reshape(weight_shape), dtype=elem_type)
     lo_v = coreai.broadcasting_mul(_take(x, coreai.constant(lo), axis), w_lo)
     hi_v = coreai.broadcasting_mul(_take(x, coreai.constant(hi), axis), w_hi)
     return coreai.broadcasting_add(lo_v, hi_v)
@@ -377,8 +401,10 @@ def replace_resize(
     if tensor_type(x).rank != 4:
         raise ValueError("Resize: only rank-4 (NCHW) inputs are supported")
     n, c, in_h, in_w = tensor_type(x).shape
-    if min(n, c, in_h, in_w) < 0:
-        raise ValueError("Resize: requires a fully static input shape")
+    if min(in_h, in_w) < 0:
+        # Batch and channels may be dynamic; the resampled dims may not, since
+        # the source indices are computed at conversion time.
+        raise ValueError("Resize: requires static spatial (H, W) dimensions")
 
     axes: list[int] | None = node_attrs.get("axes")
     if axes is not None:
@@ -413,7 +439,12 @@ def replace_resize(
             )
         sizes = _require_const(sizes_v, "Resize", "'sizes' input").astype(np.int64)
         if axes is None:
-            if sizes.shape != (4,) or sizes[0] != n or sizes[1] != c:
+            # A dynamic batch/channel dim cannot be compared; ONNX requires
+            # the given size to equal it.
+            if sizes.shape != (4,) or any(
+                dim >= 0 and size != dim
+                for size, dim in zip(sizes[:2], (n, c), strict=True)
+            ):
                 raise ValueError(
                     "Resize: only spatial resize is supported "
                     "(batch/channel sizes must match the input)"
@@ -422,7 +453,15 @@ def replace_resize(
         else:
             sizes = sizes[np.argsort(axes)]  # same axes-order rule as scales
         out_h, out_w = int(sizes[0]), int(sizes[1])
-        scale_h, scale_w = out_h / in_h, out_w / in_w
+        # ORT derives the scale as a float32 quotient.
+        scale_h = float(_F32(out_h) / _F32(in_h))
+        scale_w = float(_F32(out_w) / _F32(in_w))
+
+    if (out_h, out_w) == (in_h, in_w):
+        # ONNX Runtime copies the input whenever the output shape equals the
+        # input shape, whatever the scales say (a 1.1x scale of a 4-wide dim
+        # still gives 4, and ORT does not resample it).
+        return x
 
     if mode == "nearest":
         nearest_mode = node_attrs.get("nearest_mode", "round_prefer_floor")

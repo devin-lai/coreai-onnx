@@ -54,6 +54,7 @@ def coreai_runtime_test(obj):
         obj = mark(obj)
     return requires_coreai_runtime(obj)
 
+
 _TEST_COMPUTE_UNIT = os.environ.get("COREAI_ONNX_TEST_COMPUTE_UNIT")
 _COREAI_RUNTIME_LOCK_PATH = Path(tempfile.gettempdir()) / "coreai_onnx_runtime.lock"
 
@@ -92,6 +93,7 @@ def skip_on_compute_unit(*units: str, reason: str) -> pytest.MarkDecorator:
 _NP_TO_ONNX = {
     np.dtype(np.float32): TensorProto.FLOAT,
     np.dtype(np.float16): TensorProto.FLOAT16,
+    np.dtype(np.int16): TensorProto.INT16,
     np.dtype(np.int32): TensorProto.INT32,
     np.dtype(np.int64): TensorProto.INT64,
     np.dtype(np.uint8): TensorProto.UINT8,

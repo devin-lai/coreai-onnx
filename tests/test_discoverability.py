@@ -120,7 +120,8 @@ def test_pyproject_metadata_complete():
     assert "Programming Language :: Python :: 3.11" in classifiers
     assert "Programming Language :: Python :: 3.12" in classifiers
     assert "Programming Language :: Python :: 3.13" in classifiers
-    assert project["requires-python"] == ">=3.11,<3.14"
+    assert "Programming Language :: Python :: 3.14" in classifiers
+    assert project["requires-python"] == ">=3.11,<3.15"
     assert any(c.startswith("Topic ::") for c in classifiers)
     assert "onnx" in project["keywords"]
     urls = project["urls"]
@@ -182,7 +183,7 @@ def test_ci_runs_lightweight_cross_platform_checks_and_docs_on_prs():
     assert ci.count("timeout-minutes:") == 1
     assert ci.count("cache: pip") == 1
     assert ci.count("cache-dependency-path: pyproject.toml") == 1
-    assert "python -m pip install -e \".[test]\" build ruff twine" in ci
+    assert 'python -m pip install -e ".[test]" build ruff twine' in ci
     assert "ruff check ." in ci
     assert "python -m compileall src tests" in ci
     assert 'pytest -m "not apple and not integration"' in ci

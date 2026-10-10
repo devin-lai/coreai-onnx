@@ -66,6 +66,12 @@ def coreai_type_from_onnx_dtype(onnx_dtype: int) -> Type:
     return factory()
 
 
+def _as_array(clipped: np.ndarray, target: np.dtype) -> np.ndarray:
+    # np.clip collapses a 0-d array to a numpy scalar; keep it an ndarray so
+    # a scalar tensor (e.g. an int64 timestep input) stays a rank-0 tensor.
+    return np.asarray(clipped, dtype=target)
+
+
 def narrow_array(arr: np.ndarray, *, context: str) -> np.ndarray:
     """Apply the 64→32-bit narrowing policy to a numpy array.
 
@@ -92,9 +98,9 @@ def narrow_array(arr: np.ndarray, *, context: str) -> np.ndarray:
                 f"{context}: {arr.dtype} value {bad} does not fit in {target} "
                 "(Core AI narrows 64-bit integers to 32-bit)"
             )
-        return np.clip(arr, info.min, info.max).astype(target)
+        return _as_array(np.clip(arr, info.min, info.max), target)
     finfo = np.finfo(target)
-    return np.clip(arr, finfo.min, finfo.max).astype(target)
+    return _as_array(np.clip(arr, finfo.min, finfo.max), target)
 
 
 def tensor_type_from_value_info(vi: onnx.ValueInfoProto) -> RankedTensorType:

@@ -75,6 +75,12 @@ def _take(x: Value, idx: Value, axis: int) -> Value:
     """
     rank = tensor_type(x).rank
     q = tensor_type(idx).rank
+    if rank == 1 and q == 0:
+        # x[i] on a vector (the exported form of `tensor.shape[i]`): a rank-0
+        # gather_nd result aborts the GPU backend ("Rank of destination array
+        # must be greater than 0"), so gather one element and drop the dim.
+        picked = coreai.gather_nd(input=x, indices=coreai.reshape(idx, [1, 1]))
+        return coreai.shrink_dims(picked, [0])
     if axis:
         front = [axis, *range(axis), *range(axis + 1, rank)]
         x = coreai.transpose(x, np.array(front, dtype=np.uint32))

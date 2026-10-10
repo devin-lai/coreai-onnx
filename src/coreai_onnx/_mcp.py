@@ -35,6 +35,20 @@ _INSTRUCTIONS = (
 )
 
 
+def _mcp_import_hint() -> str:
+    """Why FastMCP could not be imported: no SDK, or one this server predates."""
+    from importlib import metadata
+
+    try:
+        installed = metadata.version("mcp")
+    except metadata.PackageNotFoundError:
+        return _MCP_HINT
+    return (
+        f"the MCP server is written against the MCP SDK 1.x, but mcp {installed} "
+        'is installed; install a supported SDK with pip install "coreai-onnx[mcp]"'
+    )
+
+
 async def _call_runner(command: str, ns: argparse.Namespace) -> dict[str, Any]:
     """Run a command in a worker thread and wrap the outcome in an envelope.
 
@@ -60,7 +74,7 @@ def _build_server():
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
-        raise ImportError(_MCP_HINT) from exc
+        raise ImportError(_mcp_import_hint()) from exc
 
     server = FastMCP("coreai-onnx", instructions=_INSTRUCTIONS)
 

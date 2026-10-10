@@ -12,11 +12,18 @@ from typing import Any
 import numpy as np
 import onnx
 
-from .._ir import IntegerType, Location, Value, tensor_type
+from .._ir import (
+    IntegerType,
+    Location,
+    RankedTensorType,
+    ShapedType,
+    Value,
+    tensor_type,
+)
 from .._ir import coreai_dialect as coreai
 from .._type_mapping import coreai_type_from_onnx_dtype
 from .._utils import attrs, normalize_axis, operand, operands
-from ._common import _INT32_MAX, _const_array, _require_const
+from ._common import _INT32_MAX, _cast, _const_array, _require_const
 
 # ---------------------------------------------------------------------------
 # Identity
@@ -39,19 +46,14 @@ def replace_cast(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
     (x,) = operands(values_map, node, [0])
-    target = coreai_type_from_onnx_dtype(attrs(node)["to"])
-    if tensor_type(x).element_type == target:
-        return x
-    return coreai.cast(x, target)
+    return _cast(x, coreai_type_from_onnx_dtype(attrs(node)["to"]))
 
 
 def replace_cast_like(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
     x, target = operands(values_map, node, [0, 1])
-    if tensor_type(x).element_type == tensor_type(target).element_type:
-        return x
-    return coreai.cast(x, tensor_type(target).element_type)
+    return _cast(x, tensor_type(target).element_type)
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +187,58 @@ def _static_concat_with_pad_add(
     return result
 
 
+def _unify_dynamic_dims(vals: list[Value], axis: int) -> list[Value]:
+    """Give every Concat input the static size its siblings know for a dim.
+
+    coreai.concat needs the non-concat dims to be provably equal. With dynamic
+    shapes one input can carry a dynamic dim where a sibling has a static size
+    for the same position; the two are equal at runtime, but only a reshape
+    tells the type system so (as coreai-torch's cat lowering does). Two
+    different static sizes on one dim is a real mismatch, left to the verifier.
+    """
+    rank = tensor_type(vals[0]).rank
+    known: list[int | None] = []
+    for dim in range(rank):
+        sizes = {tensor_type(v).shape[dim] for v in vals} if dim != axis else set()
+        static = {size for size in sizes if size >= 0}
+        known.append(static.pop() if len(static) == 1 else None)
+
+    unified = []
+    for v in vals:
+        shape = list(tensor_type(v).shape)
+        target = [
+            size if shape[dim] < 0 and (size := known[dim]) is not None else shape[dim]
+            for dim in range(rank)
+        ]
+        if target == shape:
+            unified.append(v)
+        elif all(size >= 0 for size in target):
+            unified.append(coreai.reshape(v, target))
+        else:
+            # Still partly dynamic: build the target from the runtime sizes of
+            # the dynamic dims and constants for the now-known ones.
+            runtime = coreai.cast(coreai.get_shape(v), np.int32)
+            parts = [
+                coreai.constant([size], dtype=np.int32)
+                if size >= 0
+                else coreai.slice_(runtime, [dim], [dim + 1], [1])
+                for dim, size in enumerate(target)
+            ]
+            result_type = RankedTensorType.get(
+                [
+                    size if size >= 0 else ShapedType.get_dynamic_size()
+                    for size in target
+                ],
+                tensor_type(v).element_type,
+            )
+            unified.append(
+                coreai.ReshapeOp(
+                    v, coreai.concat(0, parts), results=[result_type]
+                ).result
+            )
+    return unified
+
+
 def replace_concat(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
@@ -200,7 +254,7 @@ def replace_concat(
         raise ValueError(f"Concat: all inputs must have the same rank, got {ranks}")
     shapes = [list(tensor_type(v).shape) for v in vals]
     if any(dim < 0 for shape in shapes for dim in shape):
-        return coreai.concat(axis, vals)
+        return coreai.concat(axis, _unify_dynamic_dims(vals, axis))
     elem_types = [tensor_type(v).element_type for v in vals]
     if any(elem_type != elem_types[0] for elem_type in elem_types[1:]):
         raise ValueError(
@@ -563,6 +617,58 @@ _ONNX_TO_COREAI_PAD_MODE = {
 }
 
 
+def _crop(x: Value, begin: list[int], end: list[int]) -> Value:
+    """Drop begin[d] leading and end[d] trailing elements of every dim d."""
+    rank = tensor_type(x).rank
+    shape = tensor_type(x).shape
+    stop: list[int] = []
+    dynamic = False
+    for d in range(rank):
+        if not end[d]:
+            stop.append(_INT32_MAX)
+        elif shape[d] >= 0:
+            stop.append(shape[d] - end[d])
+        else:
+            stop.append(-end[d])
+            dynamic = True
+    stop_v: Value | np.ndarray
+    if dynamic:
+        # A dim of unknown size can only be cropped relative to its runtime
+        # size; the INT32_MAX "to the end" entries pass through unchanged.
+        offsets = np.array(stop, dtype=np.int32)
+        sizes = coreai.cast(coreai.get_shape(x), np.int32)
+        stop_v = coreai.broadcasting_where(
+            coreai.constant(offsets < 0),
+            coreai.broadcasting_add(sizes, coreai.constant(offsets)),
+            coreai.constant(offsets),
+        )
+    else:
+        stop_v = np.array(stop, dtype=np.int32)
+    return coreai.slice_(
+        x, np.array(begin, dtype=np.int32), stop_v, np.ones(rank, dtype=np.int32)
+    )
+
+
+def _runtime_padding(pads_v: Value, axes: list[int], rank: int) -> Value:
+    """Reorder a runtime ONNX pads tensor into coreai.pad's layout.
+
+    ONNX gives [b_1, ..., b_n, e_1, ..., e_n] for the padded axes; coreai.pad
+    takes [b_0, e_0, b_1, e_1, ...] over every dim, as ui32.
+    """
+    n = len(axes)
+    pads = coreai.cast(pads_v, np.int32)
+    zero = coreai.constant(np.zeros(1, dtype=np.int32))
+    parts: list[Value] = []
+    for d in range(rank):
+        if d in axes:
+            i = axes.index(d)
+            parts.append(coreai.slice_(pads, [i], [i + 1], [1]))
+            parts.append(coreai.slice_(pads, [n + i], [n + i + 1], [1]))
+        else:
+            parts.extend([zero, zero])
+    return coreai.cast(coreai.concat(0, parts), np.uint32)
+
+
 def replace_pad(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
@@ -574,7 +680,6 @@ def replace_pad(
             f"Pad: mode '{mode}' is not supported "
             "(supported: constant, reflect, edge, wrap)"
         )
-    pads = _require_const(pads_v, "Pad", "'pads' input").reshape(-1)
     rank = tensor_type(x).rank
     axes_v = operand(values_map, node, 3)
     if axes_v is not None:
@@ -587,17 +692,6 @@ def replace_pad(
     if len(axes) != len(set(axes)):
         raise ValueError("Pad: duplicate axes")
 
-    n = len(axes)
-    # Reorder ONNX [b1, b2, ..., e1, e2, ...] to coreai [b1, e1, b2, e2, ...].
-    padding = [0] * (2 * rank)
-    for i, a in enumerate(axes):
-        padding[2 * a] = int(pads[i])
-        padding[2 * a + 1] = int(pads[n + i])
-    if any(p < 0 for p in padding):
-        raise ValueError("Pad: negative pads (cropping) are not supported")
-    if not any(padding):
-        return x
-
     value_v = operand(values_map, node, 2)
     value: Value
     if value_v is None:
@@ -606,6 +700,29 @@ def replace_pad(
         value = coreai.cast(value_v, tensor_type(x).element_type)
     else:
         value = value_v
+
+    pads_a = _const_array(pads_v)
+    if pads_a is None:
+        # Pad amounts computed at runtime: coreai.pad takes them as an operand.
+        # They must be non-negative — a runtime crop cannot be expressed.
+        return coreai.pad(x, _runtime_padding(pads_v, axes, rank), value, coreai_mode)
+
+    pads = pads_a.reshape(-1)
+    n = len(axes)
+    begin = [0] * rank
+    end = [0] * rank
+    for i, a in enumerate(axes):
+        begin[a] = int(pads[i])
+        end[a] = int(pads[n + i])
+    if any(p < 0 for p in begin + end):
+        # A negative pad removes elements: crop first, then pad what is left.
+        x = _crop(x, [max(0, -p) for p in begin], [max(0, -p) for p in end])
+        begin = [max(0, p) for p in begin]
+        end = [max(0, p) for p in end]
+    # Interleave to coreai's [b0, e0, b1, e1, ...].
+    padding = [p for pair in zip(begin, end, strict=True) for p in pair]
+    if not any(padding):
+        return x
     return coreai.pad(x, np.array(padding, dtype=np.uint32), value, coreai_mode)
 
 

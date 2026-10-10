@@ -2,7 +2,7 @@
 
 [![Lightweight CI](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml/badge.svg)](https://github.com/devin-lai/coreai-onnx/actions/workflows/ci.yml)
 [![License: BSD-3-Clause](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg)](LICENSE)
-[![Python 3.11-3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11-3.14](https://img.shields.io/badge/python-3.11--3.14-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/pypi/v/coreai-onnx?label=pypi&cacheSeconds=300)](https://pypi.org/project/coreai-onnx/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
@@ -39,9 +39,11 @@ from pathlib import Path
 import coreai_onnx
 
 program = coreai_onnx.convert("model.onnx", input_names=["x"], output_names=["y"])
-program.optimize()
 program.save_asset(Path("model.aimodel"))
 ```
+
+`convert()` returns an optimized program. Pass `optimize=False` to inspect the
+IR before optimization.
 
 Or from the command line:
 
@@ -184,7 +186,7 @@ the current list, which includes:
 
 ## Versioning and CoreAI compatibility
 
-coreai-onnx depends on `coreai-core>=1.0.0b1,<2`. Public GitHub CI validates the
+coreai-onnx depends on `coreai-core>=1.0.0b2,<2`. Public GitHub CI validates the
 linting, packaging, bytecode-compilation, and pure-Python test surface only.
 Release validation against the supported Core AI environment is performed
 locally on macOS 27 + Xcode 27 beta. The CLI JSON envelope

@@ -20,12 +20,16 @@ from pathlib import Path
 import coreai_onnx
 
 program = coreai_onnx.convert("model.onnx", input_names=["x"], output_names=["y"])
-program.optimize()
 program.save_asset(Path("model.aimodel"))
 ```
 
 That is the entire API for the common case. `convert()` accepts either a path string or
 an `onnx.ModelProto` loaded in memory.
+
+`convert()` and `OnnxConverter.to_coreai()` optimize the program before returning
+it. Call `save_asset()` directly; coreai-core 1.0.0b3 removed the separate
+`AIProgram.optimize()` method. Pass `optimize=False` to inspect the IR before
+optimization.
 
 ## CLI examples
 

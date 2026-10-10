@@ -11,10 +11,16 @@ from typing import Any
 import numpy as np
 import onnx
 
-from .._ir import Location, Value, tensor_type
+from .._ir import IntegerType, Location, Value, tensor_type
 from .._ir import coreai_dialect as coreai
 from .._utils import attrs, normalize_axis, operand, operands
-from ._common import _INT32_MAX, _require_const, _variadic_reduce
+from ._common import (
+    _INT32_MAX,
+    _int_trunc_divide,
+    _require_const,
+    _variadic_reduce,
+)
+from ._indexing import _take
 
 # ---------------------------------------------------------------------------
 # Reductions  (opset 18+ form: 'axes' as optional input 1)
@@ -49,6 +55,31 @@ def _reduce_axes(
 
 def _square(x: Value) -> Value:
     return coreai.broadcasting_mul(x, x)
+
+
+def _axis_size(x: Value, axis: int) -> Value:
+    """Size of one dimension as an si32 value (a constant when static)."""
+    dim = tensor_type(x).shape[axis]
+    if dim >= 0:
+        return coreai.constant(dim, dtype=np.int32)
+    size = coreai.slice_(coreai.get_shape(x), [axis], [axis + 1], [1])
+    # Rank 0, like the static case, so it broadcasts without adding a dim.
+    return coreai.reshape(coreai.cast(size, np.int32), [])
+
+
+def _mean(x: Value, axes: list[int]) -> Value:
+    """reduce_mean, extended to integer tensors.
+
+    coreai.reduce_mean only accepts floats. ONNX ReduceMean also takes 32/64-bit
+    integers, where the result is the integer mean: sum / count, truncated.
+    """
+    e = tensor_type(x).element_type
+    if not isinstance(e, IntegerType):
+        return coreai.reduce_mean(x, axes)
+    count = _axis_size(x, axes[0])
+    for axis in axes[1:]:
+        count = coreai.broadcasting_mul(count, _axis_size(x, axis))
+    return _int_trunc_divide(coreai.reduce_sum(x, axes), coreai.cast(count, e))
 
 
 def _reduce(
@@ -102,7 +133,8 @@ def replace_reduce_log_sum_exp(
 
 
 # ---------------------------------------------------------------------------
-# ArgMax / ArgMin  (ties → smallest index)
+# ArgMax / ArgMin  (ties → smallest index, or the largest with
+# select_last_index=1)
 # ---------------------------------------------------------------------------
 
 
@@ -112,24 +144,30 @@ def _arg_reduce(op_name: str, minimum: bool) -> Callable[..., Value]:
     ) -> Value:
         (x,) = operands(values_map, node, [0])
         node_attrs = attrs(node)
-        if node_attrs.get("select_last_index", 0):
-            raise ValueError(f"{op_name}: select_last_index=1 is not supported")
         axis = normalize_axis(node_attrs.get("axis", 0), tensor_type(x).rank)
+        select_last = bool(node_attrs.get("select_last_index", 0))
+        if select_last:
+            # The last extremum along the axis is the first one of the
+            # reversed axis; the index is mapped back below.
+            last_index = coreai.broadcasting_sub(
+                _axis_size(x, axis), coreai.constant(1, dtype=np.int32)
+            )
+            x = coreai.reverse(x, np.array([axis], dtype=np.int32))
         if minimum:
             # Do not lower ArgMin as ArgMax(-x): signed integer minima overflow
             # under negation, and unsigned inputs are valid ONNX ArgMin inputs.
             order = coreai.argsort(x, axis, False, True)
-            start = np.zeros(tensor_type(x).rank, dtype=np.int32)
-            end = np.array(
-                [1 if i == axis else _INT32_MAX for i in range(tensor_type(x).rank)],
-                dtype=np.int32,
-            )
-            step = np.ones(tensor_type(x).rank, dtype=np.int32)
-            result = coreai.cast(coreai.slice_(order, start, end, step), np.int32)
+            # Take entry 0 along the axis and put the dim back as size 1. A
+            # slice [0:1] of a dynamic dim keeps a dynamic type, which
+            # shrink_dims below then rejects.
+            first = _take(order, coreai.constant(np.array(0, dtype=np.int32)), axis)
+            result = coreai.cast(coreai.expand_dims(first, [axis]), np.int32)
         else:
             # coreai.argmax keeps the reduced dim and resolves ties to the
             # smallest index, matching ONNX select_last_index=0 semantics.
             result = coreai.cast(coreai.argmax(x, axis), np.int32)
+        if select_last:
+            result = coreai.broadcasting_sub(last_index, result)
         if not node_attrs.get("keepdims", 1):
             result = coreai.shrink_dims(result, [axis])
         return result
@@ -217,7 +255,7 @@ REGISTRY: dict[str, Callable[..., Any]] = {
     "Sum": _variadic_reduce(coreai.broadcasting_add),
     # Reductions
     "ReduceSum": _reduce("reduce_sum", coreai.reduce_sum),
-    "ReduceMean": _reduce("reduce_mean", coreai.reduce_mean),
+    "ReduceMean": _reduce("reduce_mean", _mean),
     "ReduceMax": _reduce("reduce_max", coreai.reduce_max),
     "ReduceMin": _reduce("reduce_min", coreai.reduce_min),
     "ReduceProd": _reduce("reduce_prod", coreai.reduce_product),
