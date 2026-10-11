@@ -4,6 +4,62 @@ All notable changes to coreai-onnx are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Compatibility updates for coreai-core 1.0.0b3, with operator fixes and broader
+dynamic-shape support.
+
+### Changed
+- **`convert()` and `OnnxConverter.to_coreai()` now return an optimized
+  program.** coreai-core 1.0.0b3 removed `AIProgram.optimize()`, causing default
+  CLI conversions to fail with `compiler_failed`. Optimization now runs inside
+  the converter. Remove `program.optimize()` from existing code, or pass
+  `optimize=False` to inspect the IR before optimization. `--no-optimize` and
+  the envelope's `optimized` field are unchanged.
+- Requires `coreai-core>=1.0.0b2` (was `>=1.0.0b1`): 1.0.0b1 still converts,
+  but its runtime aborts when executing an asset on the current macOS 27 build,
+  so it can no longer be validated.
+- The `[mcp]` extra now requires `mcp<2`. MCP SDK 2.x renamed `FastMCP`, which
+  prevented the server from starting. The import error now identifies the
+  installed SDK version and explains how to install a supported version.
+- Python 3.14 is supported (`requires-python` is now `>=3.11,<3.15`).
+- `Resize` now follows ONNX Runtime's float32 coordinate calculations and
+  tolerance for `.5` ties. Dimensions with a scale of 1 are left unchanged,
+  and the input is copied when the output shape matches it.
+
+### Added
+- `ArgMax`/`ArgMin` with `select_last_index=1`.
+- `ReduceMean` on integer tensors (the truncated integer mean).
+- `Pad` with negative constant pads (cropping) and with non-negative pad
+  amounts computed at runtime.
+- `Resize` with a dynamic batch or channel dimension (H and W stay static).
+- `Concat` of inputs that disagree on which dimensions are static.
+
+### Fixed
+- `Floor`, `Ceil`, and `Round` returned their input unchanged in every
+  optimized program, and on `cpu_only` even unoptimized: Core AI fuses the
+  float→int32→float cast pair the lowering was built on into a no-op. They now
+  lower as coreai-torch does (`floor_divide(x, 1)`, native `round`), which also
+  makes them correct on `cpu`/`cpu_only`; float16 inputs are computed in
+  float32.
+- `Cast` float→int→float (`x.long().float()`) lost its truncation to the same
+  fusion, and float→bool→float lost its binarization on `cpu_only`. Casts to
+  bool are now a `!= 0` comparison and the int→float half of a round trip is an
+  explicit truncation.
+- Integer `Div` next to constant `Mul`/`Sub` was simplified as real-number
+  division — `(x / 48) * 48` became `x`, `x - (x / 48) * 48` became `0`,
+  `(x * 3) / 2` became `x` — corrupting the shape arithmetic of dynamic models.
+- `Gather` with a scalar index on a 1-D tensor (`tensor.shape[i]`) aborted the
+  process on the default and GPU compute units.
+- `ArgMin` over a dynamically sized axis with `keepdims=0` failed to compile.
+- The precision check failed with `TypeError: Unable to create NDArray` for
+  models with a rank-0 int64 or double input.
+- Large `Trilu` masks were folded back into a dense constant by the optimizer
+  (1 MiB for a 1024 context, against ~10 KiB unfolded); folds that expand a
+  tensor past 65,536 elements are now left to run at inference.
+- Importing coreai-onnx no longer depends on an incidental import order to
+  avoid a circular import inside coreai-core 1.0.0b3.
+
 ## [1.1.2] - 2026-06-17
 
 ### Changed

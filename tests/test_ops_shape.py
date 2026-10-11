@@ -13,6 +13,7 @@ import pytest
 from onnx import TensorProto, helper
 
 import coreai_onnx
+from coreai_onnx._ir import EXPANSION_LIMIT, mlir_module_of
 from coreai_onnx.errors import ConversionError
 
 from .helpers import (
@@ -178,6 +179,38 @@ async def test_concat_4d_channel_axis():
     inputs = {"a": a, "b": b, "c": c}
     model = single_op_model("Concat", inputs, attrs={"axis": 1})
     await assert_parity(model, inputs)
+
+
+async def test_concat_inputs_disagree_on_which_dims_are_static():
+    # a has a dynamic width while b has a static width. Both widths are equal
+    # at runtime; the lowering uses b's width to refine a's type.
+    rng = np.random.default_rng(_seed("concat-dynamic-mixed"))
+    a = rng.random((2, 3, 4)).astype(np.float32)
+    b = rng.random((2, 5, 4)).astype(np.float32)
+    model = _manual_model(
+        [helper.make_node("Concat", ["a", "b"], ["y"], axis=1)],
+        [
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, ["n", 3, "w"]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, ["n", "k", 4]),
+        ],
+        ["y"],
+    )
+    await assert_parity(model, {"a": a, "b": b})
+
+
+async def test_concat_static_with_dynamic_sibling():
+    rng = np.random.default_rng(_seed("concat-static-dynamic"))
+    a = rng.random((2, 3)).astype(np.float32)
+    b = rng.random((4, 3)).astype(np.float32)
+    model = _manual_model(
+        [helper.make_node("Concat", ["a", "b"], ["y"], axis=0)],
+        [
+            helper.make_tensor_value_info("a", TensorProto.FLOAT, [2, "c"]),
+            helper.make_tensor_value_info("b", TensorProto.FLOAT, ["n", 3]),
+        ],
+        ["y"],
+    )
+    await assert_parity(model, {"a": a, "b": b})
 
 
 async def test_concat_wide_fanin_survives_runtime():
@@ -678,6 +711,111 @@ async def test_pad_wrap():
     await assert_parity(model, {"x": x})
 
 
+@pytest.mark.parametrize("mode", ["constant", "reflect", "edge"])
+async def test_pad_negative_pads_crop(mode):
+    # A negative pad removes elements; here one side of each dim is cropped
+    # while the other is padded.
+    rng = np.random.default_rng(_seed(f"pad-negative-{mode}"))
+    x = rng.random((1, 2, 4, 5)).astype(np.float32)
+    model = single_op_model(
+        "Pad",
+        {"x": x},
+        attrs={"mode": mode},
+        initializers={"pads": np.array([0, 0, -1, 2, 0, 0, 1, -1], dtype=np.int64)},
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_pad_all_negative_is_a_crop():
+    rng = np.random.default_rng(_seed("pad-all-negative"))
+    x = rng.random((1, 2, 5, 6)).astype(np.float32)
+    model = single_op_model(
+        "Pad",
+        {"x": x},
+        initializers={"pads": np.array([0, 0, -1, -1, 0, 0, -1, -2], dtype=np.int64)},
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_pad_negative_pads_dynamic_input_shape():
+    # The cropped dim has no static size, so the slice end is resolved from
+    # the runtime shape.
+    rng = np.random.default_rng(_seed("pad-negative-dynamic"))
+    x = rng.random((2, 3, 6)).astype(np.float32)
+    model = _manual_model(
+        [helper.make_node("Pad", ["x", "pads"], ["y"])],
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, ["b", 3, "w"])],
+        ["y"],
+        {"pads": np.array([0, 1, -2, 0, 0, -1], dtype=np.int64)},
+    )
+    await assert_parity(model, {"x": x})
+
+
+@pytest.mark.parametrize("mode", ["constant", "reflect"])
+async def test_pad_runtime_pads(mode):
+    # 'pads' is a graph input, not a constant.
+    rng = np.random.default_rng(_seed(f"pad-runtime-{mode}"))
+    x = rng.random((1, 2, 4, 5)).astype(np.float32)
+    pads = np.array([0, 0, 1, 2, 0, 0, 2, 1], dtype=np.int64)
+    model = _manual_model(
+        [helper.make_node("Pad", ["x", "pads"], ["y"], mode=mode)],
+        [
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 5]),
+            helper.make_tensor_value_info("pads", TensorProto.INT64, [8]),
+        ],
+        ["y"],
+    )
+    await assert_parity(model, {"x": x, "pads": pads})
+
+
+async def test_pad_runtime_pads_with_axes_and_value():
+    rng = np.random.default_rng(_seed("pad-runtime-axes"))
+    x = rng.random((1, 2, 4, 5)).astype(np.float32)
+    pads = np.array([1, 2, 3, 4], dtype=np.int64)
+    model = _manual_model(
+        [helper.make_node("Pad", ["x", "pads", "value", "axes"], ["y"])],
+        [
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 4, 5]),
+            helper.make_tensor_value_info("pads", TensorProto.INT64, [4]),
+        ],
+        ["y"],
+        {
+            "value": np.array(0.5, dtype=np.float32),
+            "axes": np.array([2, 3], dtype=np.int64),
+        },
+    )
+    await assert_parity(model, {"x": x, "pads": pads})
+
+
+async def test_pad_to_multiple_from_shape_arithmetic():
+    # Pad the last dim up to a multiple of 4 — pad = (4 - w % 4) % 4, with w
+    # read from the runtime shape (the "pad to stride" export pattern).
+    rng = np.random.default_rng(_seed("pad-to-multiple"))
+    x = rng.random((1, 2, 3, 6)).astype(np.float32)
+    nodes = [
+        helper.make_node("Shape", ["x"], ["s"]),
+        helper.make_node("Gather", ["s", "i3"], ["w"]),
+        helper.make_node("Mod", ["w", "four"], ["r"]),
+        helper.make_node("Sub", ["four", "r"], ["d"]),
+        helper.make_node("Mod", ["d", "four"], ["p"]),
+        helper.make_node("Unsqueeze", ["p", "ax0"], ["p1"]),
+        helper.make_node("Concat", ["zeros", "p1"], ["pads"], axis=0),
+        helper.make_node("Pad", ["x", "pads"], ["y"]),
+    ]
+    model = _manual_model(
+        nodes,
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 2, 3, "w"])],
+        ["y"],
+        {
+            "i3": np.array(3, dtype=np.int64),
+            "four": np.array(4, dtype=np.int64),
+            "ax0": np.array([0], dtype=np.int64),
+            "zeros": np.zeros(7, dtype=np.int64),
+        },
+    )
+    await assert_parity(model, {"x": x})
+
+
 def test_pad_unknown_mode_unsupported():
     x = np.zeros((2, 3), dtype=np.float32)
     model = single_op_model(
@@ -742,6 +880,79 @@ async def test_cast_like_f32_to_f16():
         {"x": x},
         initializers={"target": np.zeros((1,), dtype=np.float16)},
     )
+    await assert_parity(model, {"x": x})
+
+
+def _cast_round_trip_model(
+    via: int, *, between: str | None = None, back_to: int = TensorProto.FLOAT
+) -> onnx.ModelProto:
+    """Relu -> Cast(via) [-> between] -> Cast(back_to) -> Add(back, back).
+
+    The surrounding ops matter: a program that is nothing but casts is a
+    separate degenerate case for the cpu_only backend.
+    """
+    nodes = [
+        helper.make_node("Relu", ["x"], ["r"]),
+        helper.make_node("Cast", ["r"], ["narrow"], to=via),
+    ]
+    last = "narrow"
+    if between == "Reshape":
+        nodes.append(helper.make_node("Reshape", [last, "shape"], ["moved"]))
+        last = "moved"
+    elif between == "Transpose":
+        nodes.append(helper.make_node("Transpose", [last], ["moved"], perm=[1, 0]))
+        last = "moved"
+    nodes.append(helper.make_node("Cast", [last], ["back"], to=back_to))
+    nodes.append(helper.make_node("Add", ["back", "back"], ["y"]))
+    out_shape = {None: [2, 4], "Reshape": [4, 2], "Transpose": [4, 2]}[between]
+    graph = helper.make_graph(
+        nodes,
+        "cast_round_trip",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [2, 4])],
+        [helper.make_tensor_value_info("y", back_to, out_shape)],
+        initializer=[
+            onnx.numpy_helper.from_array(np.array([4, 2], dtype=np.int64), "shape")
+        ],
+    )
+    return helper.make_model(
+        graph, opset_imports=[helper.make_opsetid("", 22)], ir_version=10
+    )
+
+
+_ROUND_TRIP_X = np.array(
+    [[-2.5, -1.5, -0.5, 0.0], [0.5, 1.5, 2.5, 100.7]], dtype=np.float32
+)
+
+
+@pytest.mark.parametrize(
+    "via",
+    [TensorProto.INT32, TensorProto.INT64, TensorProto.INT8, TensorProto.UINT8],
+    ids=["int32", "int64", "int8", "uint8"],
+)
+@pytest.mark.parametrize("between", [None, "Reshape", "Transpose"])
+async def test_cast_float_int_float_truncates(via, between):
+    # x.long().float(): Core AI fuses the cast pair into a no-op, so the
+    # lowering has to compute the truncation itself.
+    model = _cast_round_trip_model(via, between=between)
+    await assert_parity(model, {"x": _ROUND_TRIP_X})
+
+
+async def test_cast_float_bool_float_binarizes():
+    model = _cast_round_trip_model(TensorProto.BOOL)
+    await assert_parity(model, {"x": _ROUND_TRIP_X})
+
+
+async def test_cast_float_int_f16_truncates():
+    model = _cast_round_trip_model(TensorProto.INT32, back_to=TensorProto.FLOAT16)
+    await assert_parity(model, {"x": _ROUND_TRIP_X})
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float16, np.int32])
+async def test_cast_to_bool_is_nonzero(dtype):
+    x = np.array([0, 1, 2, 0, 7, 0], dtype=dtype)
+    if np.issubdtype(dtype, np.floating):
+        x = np.array([0.0, -0.0, 0.25, np.nan, -3.0, 1e-30], dtype=dtype)
+    model = single_op_model("Cast", {"x": x}, attrs={"to": TensorProto.BOOL})
     await assert_parity(model, {"x": x})
 
 
@@ -861,16 +1072,7 @@ async def test_trilu_batched():
     await assert_parity(model, {"x": x})
 
 
-def test_trilu_mask_constant_is_not_dense():
-    # The keep-mask must be built from O(rows+cols) iota constants, not a
-    # dense rows*cols matrix embedded in the model (4096-context causal masks
-    # would otherwise add ~16.8M constant elements per Trilu node).
-    x = np.zeros((128, 128), dtype=np.float32)
-    model = single_op_model("Trilu", {"x": x}, attrs={"upper": 1})
-    converter = coreai_onnx.OnnxConverter()
-    converter.add_onnx_model(model)
-    program = converter.to_coreai()
-
+def _largest_constant(program) -> int:
     biggest = 0
 
     def walk(op):
@@ -883,9 +1085,43 @@ def test_trilu_mask_constant_is_not_dense():
                 for inner in block.operations:
                     walk(inner)
 
-    for op in program._mlir_module.body.operations:
+    for op in mlir_module_of(program).body.operations:
         walk(op)
+    return biggest
+
+
+def _trilu_program(size: int, *, optimize: bool):
+    x = np.zeros((size, size), dtype=np.float32)
+    converter = coreai_onnx.OnnxConverter()
+    converter.add_onnx_model(single_op_model("Trilu", {"x": x}, attrs={"upper": 1}))
+    return converter.to_coreai(optimize=optimize)
+
+
+def test_trilu_mask_constant_is_not_dense():
+    # The keep-mask must be built from O(rows+cols) iota constants, not a
+    # dense rows*cols matrix embedded in the model (4096-context causal masks
+    # would otherwise add ~16.8M constant elements per Trilu node).
+    biggest = _largest_constant(_trilu_program(128, optimize=False))
     assert biggest <= 256, f"largest constant has {biggest} elements"
+
+
+def test_trilu_mask_stays_compact_after_optimization():
+    # Core AI's rewrite would fold the iota comparison back into the dense
+    # matrix; the converter's fold guard has to keep it out of what ships.
+    size = 1024
+    assert size * size > EXPANSION_LIMIT
+    biggest = _largest_constant(_trilu_program(size, optimize=True))
+    assert biggest <= 2 * size, f"largest constant has {biggest} elements"
+
+
+async def test_trilu_large_mask_parity():
+    # The unfolded mask is computed at inference; it must still be the mask.
+    rng = np.random.default_rng(_seed("trilu-large"))
+    x = rng.random((300, 300)).astype(np.float32)
+    assert x.size > EXPANSION_LIMIT
+    for upper in (1, 0):
+        model = single_op_model("Trilu", {"x": x}, attrs={"upper": upper})
+        await assert_parity(model, {"x": x})
 
 
 # ---------------------------------------------------------------------------

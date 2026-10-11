@@ -15,17 +15,9 @@ from .helpers import (
     assert_parity,
     requires_coreai_runtime,
     single_op_model,
-    skip_on_compute_unit,
 )
 
 pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
-
-_skip_cpu_round_floor = skip_on_compute_unit(
-    "cpu",
-    "cpu_only",
-    reason="CPU specialization returns the input unchanged for Floor/Round on "
-    "fractional values — upstream kernel bug; default/GPU/ANE are correct",
-)
 
 # ---------------------------------------------------------------------------
 # Direct unary ops — parametrized
@@ -44,7 +36,7 @@ DIRECT_UNARY = [
     "Relu",
     "Sigmoid",
     "Tanh",
-    pytest.param("Round", marks=_skip_cpu_round_floor),
+    "Round",
     "Sin",
     "Cos",
     "Tan",
@@ -90,7 +82,6 @@ async def test_gelu(approximate):
 # ---------------------------------------------------------------------------
 
 
-@_skip_cpu_round_floor
 async def test_neg_floor_ceil_round_sign():
     # Include exact .5 boundaries for Round (ONNX Round = half-to-even)
     x = np.array([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5, -1.7, 0.3, 1.7], dtype=np.float32)
@@ -344,7 +335,6 @@ async def test_mish_large_input():
 # ---------------------------------------------------------------------------
 
 
-@_skip_cpu_round_floor
 async def test_floor_large_values():
     """Floor on float32 values outside int32 range must not saturate/wrap."""
     x = np.array([3e9, -3e9, 1.5, -1.5], dtype=np.float32)
@@ -395,8 +385,9 @@ _F16_SKIP = {
     [
         "Relu",
         "Sigmoid",
-        pytest.param("Floor", marks=_skip_cpu_round_floor),
-        pytest.param("Round", marks=_skip_cpu_round_floor),
+        "Floor",
+        "Ceil",
+        "Round",
         "Softplus",
     ],
 )

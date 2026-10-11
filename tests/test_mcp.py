@@ -227,6 +227,31 @@ async def test_convert_ort_missing_warning_parity_with_cli(
     )
 
 
+def test_import_hint_names_an_unsupported_sdk_version(monkeypatch):
+    # With an MCP SDK 2.x installed FastMCP is gone, and "install the extra"
+    # would be the wrong advice: the extra is installed, at the wrong major.
+    from importlib import metadata
+
+    import coreai_onnx._mcp as m
+
+    monkeypatch.setattr(metadata, "version", lambda name: "2.3.0")
+    hint = m._mcp_import_hint()
+    assert "mcp 2.3.0" in hint
+    assert "1.x" in hint
+
+
+def test_import_hint_without_sdk_points_at_the_extra(monkeypatch):
+    from importlib import metadata
+
+    import coreai_onnx._mcp as m
+
+    def _missing(name):
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, "version", _missing)
+    assert m._mcp_import_hint() == m._MCP_HINT
+
+
 def test_main_without_mcp_extra_exits_2(monkeypatch, capsys):
     import coreai_onnx._mcp as m
 

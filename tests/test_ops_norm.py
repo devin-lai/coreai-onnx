@@ -19,6 +19,7 @@ from .helpers import (
     assert_parity,
     requires_coreai_runtime,
     run_aimodel,
+    run_onnxruntime,
     single_op_model,
 )
 
@@ -198,7 +199,8 @@ def test_group_norm_target_shape_uses_coreai_values():
     converter = coreai_onnx.OnnxConverter()
     converter.add_onnx_model(model)
 
-    text = str(converter.to_coreai())
+    # The lowering's own IR: the rewrite folds the shape arithmetic away.
+    text = str(converter.to_coreai(optimize=False))
 
     assert "coreai.concat" in text
     assert "coreai.reshape" in text
@@ -534,6 +536,138 @@ async def test_resize_nearest_downscale():
         },
     )
     await assert_parity(model, {"x": x}, rtol=1e-3, atol=1e-3)
+
+
+def _resize_model(x_shape, attrs, *, scales=None, sizes=None, input_shape=None):
+    inputs = ["x", "", "scales"] if scales is not None else ["x", "", "", "sizes"]
+    initializers = (
+        {"scales": np.array(scales, dtype=np.float32)}
+        if scales is not None
+        else {"sizes": np.array(sizes, dtype=np.int64)}
+    )
+    graph = onnx.helper.make_graph(
+        [onnx.helper.make_node("Resize", inputs, ["y"], **attrs)],
+        "resize",
+        [
+            onnx.helper.make_tensor_value_info(
+                "x", onnx.TensorProto.FLOAT, input_shape or list(x_shape)
+            )
+        ],
+        [onnx.helper.make_tensor_value_info("y", onnx.TensorProto.UNDEFINED, None)],
+        initializer=[
+            onnx.numpy_helper.from_array(a, name=n) for n, a in initializers.items()
+        ],
+    )
+    model = onnx.helper.make_model(
+        graph, opset_imports=[onnx.helper.make_opsetid("", 22)], ir_version=10
+    )
+    return onnx.shape_inference.infer_shapes(model, strict_mode=True)
+
+
+# Configurations where float64 coordinate math, an exact .5 tie test, or
+# resampling an unchanged dim picks a different source pixel than ONNX Runtime.
+_RESIZE_ORT_PARITY = {
+    # 3 / 0.6f is exactly 5.0 in float32, 4.9999998 in float64
+    "nearest_asymmetric_floor_x0.6": (
+        (1, 1, 5, 28),
+        {"scales": [1, 1, 1.5, 0.6]},
+        {
+            "mode": "nearest",
+            "coordinate_transformation_mode": "asymmetric",
+            "nearest_mode": "floor",
+        },
+    ),
+    # 4.5f / 0.3f - 0.5f is 14.4999, which ORT still rounds as a .5 tie
+    "nearest_half_pixel_tie_within_eps": (
+        (1, 1, 38, 13),
+        {"scales": [1, 1, 0.3, 0.6]},
+        {"mode": "nearest", "nearest_mode": "round_prefer_ceil"},
+    ),
+    "nearest_asymmetric_sizes_tie": (
+        (1, 1, 13, 23),
+        {"sizes": [1, 1, 4, 14]},
+        {
+            "mode": "nearest",
+            "coordinate_transformation_mode": "asymmetric",
+            "nearest_mode": "round_prefer_ceil",
+        },
+    ),
+    # int(1.1f * 4) == 4: same output shape, which ORT copies unresampled
+    "linear_scale_rounds_to_same_size": (
+        (1, 2, 4, 4),
+        {"scales": [1, 1, 1.1, 1.2]},
+        {"mode": "linear"},
+    ),
+    # only W is resampled; H (scale exactly 1) must not be touched
+    "linear_unit_scale_on_one_axis": (
+        (1, 2, 4, 6),
+        {"scales": [1, 1, 1.0, 1.7]},
+        {"mode": "linear", "coordinate_transformation_mode": "asymmetric"},
+    ),
+}
+
+
+_RESIZE_NEAR_TIE_CASES = {
+    "nearest_half_pixel_tie_within_eps",
+    "nearest_asymmetric_sizes_tie",
+}
+
+
+def _onnxruntime_rounds_near_ties() -> bool:
+    """Whether the installed ONNX Runtime has the nearest-mode tie tolerance.
+
+    Older releases compared the coordinate's fraction to 0.5 exactly, so
+    4.5f / 0.3f - 0.5f (14.4999) rounded down; current ones treat it as the
+    tie it is meant to be. The lowering follows the current behavior.
+    """
+    x = np.arange(38, dtype=np.float32).reshape(1, 1, 38, 1)
+    model = _resize_model(
+        x.shape,
+        {"mode": "nearest", "nearest_mode": "round_prefer_ceil"},
+        scales=[1, 1, 0.3, 1],
+    )
+    return bool(run_onnxruntime(model, {"x": x})[0].reshape(-1)[4] == 15.0)
+
+
+@pytest.mark.parametrize("case", sorted(_RESIZE_ORT_PARITY))
+async def test_resize_matches_onnxruntime_float32_math(case):
+    if case in _RESIZE_NEAR_TIE_CASES and not _onnxruntime_rounds_near_ties():
+        pytest.skip(
+            "this onnxruntime predates the nearest-mode tie tolerance the "
+            "lowering mirrors"
+        )
+    x_shape, size_kwargs, attrs = _RESIZE_ORT_PARITY[case]
+    rng = np.random.default_rng(_seed(f"resize-ort-{case}"))
+    x = rng.standard_normal(x_shape).astype(np.float32)
+    model = _resize_model(x_shape, attrs, **size_kwargs)
+    await assert_parity(model, {"x": x}, rtol=1e-3, atol=1e-3)
+
+
+@pytest.mark.parametrize(
+    ("attrs", "size_kwargs"),
+    [
+        ({"mode": "nearest"}, {"scales": [1, 1, 2, 2]}),
+        ({"mode": "linear"}, {"scales": [1, 1, 1.5, 2.5]}),
+        ({"mode": "linear", "axes": [2, 3]}, {"sizes": [9, 7]}),
+    ],
+    ids=["nearest_scales", "linear_scales", "linear_axes_sizes"],
+)
+async def test_resize_dynamic_batch(attrs, size_kwargs):
+    # Only the resampled dims need static sizes; a dynamic batch is fine.
+    rng = np.random.default_rng(_seed(f"resize-dynamic-batch-{attrs}"))
+    x = rng.standard_normal((3, 2, 4, 5)).astype(np.float32)
+    model = _resize_model(x.shape, attrs, input_shape=["batch", 2, 4, 5], **size_kwargs)
+    await assert_parity(model, {"x": x}, rtol=1e-3, atol=1e-3)
+
+
+def test_resize_dynamic_spatial_dims_rejected():
+    model = _resize_model(
+        (1, 2, 4, 5),
+        {"mode": "nearest"},
+        scales=[1, 1, 2, 2],
+        input_shape=[1, 2, "h", "w"],
+    )
+    _expect_conversion_error(model, "static spatial")
 
 
 def test_resize_cubic_rejected():

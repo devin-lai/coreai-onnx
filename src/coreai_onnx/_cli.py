@@ -220,7 +220,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-optimize",
         action="store_true",
         default=False,
-        help="Skip the optimize() step after conversion",
+        help="Skip Core AI's pre-compilation rewrite (optimization) after conversion",
     )
     p_convert.add_argument(
         "--name",

@@ -35,6 +35,7 @@ from google.protobuf.message import DecodeError
 from onnx.checker import ValidationError
 
 from . import _coverage
+from ._ir import optimize_program
 from .errors import (
     ConversionError,
     CoreaiOnnxError,
@@ -396,7 +397,10 @@ def _run_precision_check(
     if args.compute_unit is not None:
         report = _run(args.compute_unit)
         return _PrecisionCheck(
-            report, _present(_benign_noise_warning(report)), args.compute_unit, report.passed
+            report,
+            _present(_benign_noise_warning(report)),
+            args.compute_unit,
+            report.passed,
         )
 
     # Default: fast path on the runtime's choice; fall back to fp32 only on miss.
@@ -524,8 +528,9 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
         inputs = generate_inputs(model, seed=args.seed)
         expected = validate_onnxruntime(model, inputs=inputs)
 
-    # Step 2: convert.
-    program = _convert(model, entrypoint_name=args.name)
+    # Step 2: convert. Optimization is deferred to step 3 so a compiler
+    # failure there is reported as compiler_failed, not conversion_failed.
+    program = _convert(model, entrypoint_name=args.name, optimize=False)
 
     # Step 3: optimize + save. Native Core AI compiler failures are not
     # CoreaiOnnxError; capture them as a structured error (their message
@@ -535,7 +540,7 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
     _replace_existing_aimodel(out_path)
     try:
         if not args.no_optimize:
-            program.optimize()
+            optimize_program(program)
         program.save_asset(out_path, metadata=_asset_metadata())
     except Exception as exc:
         return _Outcome(
@@ -598,7 +603,9 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
     if nonfinite is not None:
         warnings.append(nonfinite)
     warnings.extend(pc.warnings)
-    result["precision"] = _verify_result_dict(pc.report, args, compute_unit=pc.effective_unit)
+    result["precision"] = _verify_result_dict(
+        pc.report, args, compute_unit=pc.effective_unit
+    )
     if pc.passed:
         return _Outcome(exit_code=0, result=result, warnings=warnings)
     return _Outcome(

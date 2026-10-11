@@ -17,8 +17,10 @@ from .._utils import attrs, normalize_axis, operand, operands
 from ._common import (
     _binary,
     _bool_result,
+    _ceil_f,
     _cmp_operand,
     _floor_f,
+    _int_trunc_divide,
     _sign_value,
     _stable_softplus,
     _to_f32,
@@ -219,6 +221,20 @@ def replace_mean(
 
 
 # ---------------------------------------------------------------------------
+# Div  (true division for floats; truncation toward zero for integers)
+# ---------------------------------------------------------------------------
+
+
+def replace_div(
+    values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
+) -> Value:
+    x, y = operands(values_map, node, [0, 1])
+    if isinstance(tensor_type(x).element_type, IntegerType):
+        return _int_trunc_divide(x, y)
+    return coreai.broadcasting_divide(x, y)
+
+
+# ---------------------------------------------------------------------------
 # Mod  (fmod=0: sign follows divisor; fmod=1: sign follows dividend)
 # ---------------------------------------------------------------------------
 
@@ -242,7 +258,7 @@ def replace_mod(
     # Python/ONNX Mod (fmod=0): sign follows divisor.
     # The truncated remainder must come from the native modulo op: the
     # decomposition x - trunc_div(x, y) * y is cancelled to 0 by
-    # AIProgram.optimize() when y is a constant (real-number algebra,
+    # Core AI's pre-compilation rewrite when y is a constant (real-number algebra,
     # invalid for truncating integer division). Correct to floor-mod via:
     #   floor_mod = where(trunc_r != 0 AND sign(trunc_r) != sign(y),
     #                     trunc_r + y, trunc_r)
@@ -272,41 +288,8 @@ replace_sigmoid = _unary(coreai.sigmoid)
 replace_tanh = _unary(coreai.tanh)
 
 
-def replace_round(
-    values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
-) -> Value:
-    """ONNX Round = round-half-to-even (banker's rounding).
-
-    coreai.round_ uses half-away-from-zero, so we decompose manually:
-      lo = floor(x)
-      hi = lo + 1
-      frac = x - lo
-      at_half = (frac == 0.5)
-      lo_is_even = (lo % 2 == 0)
-      result = where(at_half, where(lo_is_even, lo, hi),
-                               where(frac < 0.5, lo, hi))
-    """
-    (x,) = operands(values_map, node, [0])
-    e = tensor_type(x).element_type
-    lo = _floor_f(x)
-    hi = coreai.broadcasting_add(lo, coreai.constant(1, dtype=e))
-    frac = coreai.broadcasting_sub(x, lo)
-    # lo % 2: use floor(lo / 2) * 2; lo is integer-valued
-    lo_over_2 = _floor_f(coreai.broadcasting_divide(lo, coreai.constant(2, dtype=e)))
-    lo_mod_2 = coreai.broadcasting_sub(
-        lo, coreai.broadcasting_mul(coreai.constant(2, dtype=e), lo_over_2)
-    )
-    lo_is_even = coreai.broadcasting_equal(lo_mod_2, coreai.constant(0, dtype=e))
-    # at_half: frac == 0.5 exactly
-    half = coreai.constant(0.5, dtype=e)
-    at_half = coreai.broadcasting_equal(frac, half)
-    # result when exactly at half boundary: pick the even neighbor
-    result_at_half = coreai.broadcasting_where(lo_is_even, lo, hi)
-    # result otherwise: standard rounding (< 0.5 → lo, >= 0.5 → hi)
-    result_otherwise = coreai.broadcasting_where(
-        coreai.broadcasting_greater(half, frac), lo, hi
-    )
-    return coreai.broadcasting_where(at_half, result_at_half, result_otherwise)
+# ONNX Round is round-half-to-even, which is what coreai.round_ implements.
+replace_round = _unary(coreai.round_)
 
 
 replace_sin = _unary(coreai.sin)
@@ -351,7 +334,7 @@ def replace_neg(
 
 
 # ---------------------------------------------------------------------------
-# Floor  (trunc + correction for negative non-integers)
+# Floor  (floor_divide(x, 1))
 # ---------------------------------------------------------------------------
 
 
@@ -371,10 +354,7 @@ def replace_ceil(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
     (x,) = operands(values_map, node, [0])
-    neg_one = coreai.constant(-1, dtype=tensor_type(x).element_type)
-    neg_x = coreai.broadcasting_mul(x, neg_one)
-    floor_neg_x = _floor_f(neg_x)
-    return coreai.broadcasting_mul(floor_neg_x, neg_one)
+    return _ceil_f(x)
 
 
 # ---------------------------------------------------------------------------
@@ -782,7 +762,7 @@ REGISTRY: dict[str, Callable[..., Any]] = {
     "Add": _binary(coreai.broadcasting_add),
     "Sub": _binary(coreai.broadcasting_sub),
     "Mul": _binary(coreai.broadcasting_mul),
-    "Div": _binary(coreai.broadcasting_divide),
+    "Div": replace_div,
     "Pow": replace_pow,
     # Variadic elementwise
     "Min": _variadic_reduce(coreai.broadcasting_minimum, propagate_nan=True),

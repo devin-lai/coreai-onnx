@@ -93,6 +93,24 @@ def test_narrow_array_float64() -> None:
     assert out[1] == np.finfo(np.float32).max
 
 
+@pytest.mark.parametrize(
+    ("value", "dtype", "narrowed"),
+    [
+        (7, np.int64, np.int32),
+        (2**63 - 1, np.int64, np.int32),
+        (7, np.uint64, np.uint32),
+        (2.5, np.float64, np.float32),
+    ],
+)
+def test_narrow_array_keeps_scalar_tensors_as_arrays(value, dtype, narrowed) -> None:
+    # A rank-0 input (an int64 timestep, a scalar length) must stay an ndarray:
+    # the runtime's NDArray rejects numpy scalars.
+    out = narrow_array(np.array(value, dtype=dtype), context="test")
+    assert isinstance(out, np.ndarray)
+    assert out.shape == ()
+    assert out.dtype == narrowed
+
+
 @pytest.mark.usefixtures("ctx")
 def test_tensor_type_static_and_dynamic() -> None:
     vi = onnx.helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, "batch", 224])

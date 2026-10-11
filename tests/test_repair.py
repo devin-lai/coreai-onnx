@@ -60,6 +60,7 @@ def test_apply_repairs_promotes_internal_float16_without_float16_inputs():
     model = onnx.helper.make_model(
         onnx.helper.make_graph([to_f16, back], "internal_f16", [x], [y]),
         opset_imports=[onnx.helper.make_opsetid("", 17)],
+        ir_version=10,
     )
     assert all(vi.type.tensor_type.elem_type != F16 for vi in model.graph.input)
 

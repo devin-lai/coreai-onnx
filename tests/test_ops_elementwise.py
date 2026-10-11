@@ -7,6 +7,7 @@ import zlib
 
 import numpy as np
 import pytest
+from onnx import TensorProto, helper, numpy_helper
 
 from .helpers import (
     COREAI_RUNTIME_MARKS,
@@ -170,7 +171,7 @@ async def test_mod_fmod1_mixed_sign():
 
 
 async def test_mod_fmod0_int_survives_optimize(tmp_path):
-    """Integer Mod must survive AIProgram.optimize().
+    """Integer Mod must survive Core AI's pre-compilation rewrite.
 
     The Core AI optimizer cancels the decomposition x - trunc_div(x, y) * y
     to 0 by real-number algebra (invalid for truncating integer division), so
@@ -188,7 +189,6 @@ async def test_mod_fmod0_int_survives_optimize(tmp_path):
     program = coreai_onnx.convert(
         single_op_model("Mod", {"a": a}, initializers={"b": b})
     )
-    program.optimize()
     asset = program.save_asset(tmp_path / "m.aimodel")
     async with asset.executable(_specialization_options()) as ai_model:
         fn = ai_model.load_function("main")
@@ -200,6 +200,68 @@ async def test_div_int_truncates():
     a = np.array([-7, 7, -7, 7], dtype=np.int32)
     b = np.array([2, -2, -2, 2], dtype=np.int32)
     # ONNX Div on ints truncates toward zero: [-3, -3, 3, 3]
+    await assert_parity(single_op_model("Div", {"a": a, "b": b}), {"a": a, "b": b})
+
+
+_INT_DIV_CHAINS = {
+    # (x / 48) * 48: x rounded toward zero to a multiple of 48, not x
+    "div_mul": [("Div", ["x", "c48"], "q"), ("Mul", ["q", "c48"], "y")],
+    # x - (x / 48) * 48: the truncated remainder, not 0
+    "manual_mod": [
+        ("Div", ["x", "c48"], "q"),
+        ("Mul", ["q", "c48"], "p"),
+        ("Sub", ["x", "p"], "y"),
+    ],
+    # (x * 3) / 2: not x * (3 / 2)
+    "mul_div": [("Mul", ["x", "c3"], "m"), ("Div", ["m", "c2"], "y")],
+    "div_div": [("Div", ["x", "c3"], "m"), ("Div", ["m", "c2"], "y")],
+    "div_negative_constant": [("Div", ["x", "cneg3"], "y")],
+}
+
+
+@pytest.mark.parametrize("chain", sorted(_INT_DIV_CHAINS))
+async def test_div_int_constant_chain_survives_rewrite(chain):
+    """Integer Div next to constant arithmetic must keep truncating.
+
+    Core AI's pre-compilation rewrite simplifies integer division as if it
+    were real division — the shape arithmetic of dynamic models
+    ((h / 16) * 16, x - (x / n) * n) silently changed value.
+    """
+    x = np.array([-7, 7, -100, 0, 100, 47, 48, 3070], dtype=np.int32)
+    nodes = [
+        helper.make_node(op, inputs, [out])
+        for op, inputs, out in _INT_DIV_CHAINS[chain]
+    ]
+    constants = {"c48": 48, "c3": 3, "c2": 2, "cneg3": -3}
+    graph = helper.make_graph(
+        nodes,
+        chain,
+        [helper.make_tensor_value_info("x", TensorProto.INT32, [8])],
+        [helper.make_tensor_value_info("y", TensorProto.INT32, [8])],
+        initializer=[
+            numpy_helper.from_array(np.array([v], dtype=np.int32), name)
+            for name, v in constants.items()
+        ],
+    )
+    model = helper.make_model(
+        graph, opset_imports=[helper.make_opsetid("", 22)], ir_version=10
+    )
+    await assert_parity(model, {"x": x})
+
+
+@pytest.mark.parametrize("dtype", [np.int16, np.int32])
+async def test_div_int_type_minimum(dtype):
+    # |minimum| does not fit the type, so a quotient built from abs() comes
+    # out with the wrong sign and magnitude here.
+    lo, hi = np.iinfo(dtype).min, np.iinfo(dtype).max
+    a = np.array([lo, hi, lo, lo + 1, -7, 7], dtype=dtype)
+    b = np.array([3, -3, hi, -1, 2, -2], dtype=dtype)
+    await assert_parity(single_op_model("Div", {"a": a, "b": b}), {"a": a, "b": b})
+
+
+async def test_div_int_exact_and_inexact_all_sign_pairs():
+    a = np.array([-8, 8, -8, 8, -7, 7, -7, 7, 0, 0, 1, -1], dtype=np.int32)
+    b = np.array([2, -2, -2, 2, 2, -2, -2, 2, 5, -5, 9, 9], dtype=np.int32)
     await assert_parity(single_op_model("Div", {"a": a, "b": b}), {"a": a, "b": b})
 
 

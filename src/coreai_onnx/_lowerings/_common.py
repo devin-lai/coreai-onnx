@@ -16,9 +16,12 @@ from .._ir import (
     DenseElementsAttr,
     F16Type,
     FloatType,
+    IntegerType,
     Location,
     OpResult,
+    Type,
     Value,
+    operand_values,
     tensor_type,
 )
 from .._ir import coreai_dialect as coreai
@@ -65,6 +68,46 @@ def _binary(coreai_fn: Callable[..., Any]) -> Callable[..., Value]:
     # Strip the "broadcasting_" prefix so the debug name reads replace_add, etc.
     _lower.__name__ = f"replace_{coreai_fn.__name__.removeprefix('broadcasting_')}"
     return _lower
+
+
+# ---------------------------------------------------------------------------
+# Integer division  (ONNX Div on integers truncates toward zero)
+#
+# coreai's divide does truncate integers at runtime, but the pre-compilation
+# rewrite simplifies it as real-number division: with a constant c,
+# (x / c) * c becomes x, x - (x / c) * c becomes 0, and (x * a) / b becomes
+# x * (a / b). floor_divide is left alone, so the quotient is built from it.
+#
+# The division is done on -|x| and -|y|: their quotient is non-negative, where
+# flooring and truncating agree (the runtime has been seen doing either for
+# negative integers), and unlike |x| a negated magnitude cannot overflow at the
+# type minimum (abs(-128) is still -128 in int8). The sign goes back on after.
+# ---------------------------------------------------------------------------
+
+
+def _int_trunc_divide(x: Value, y: Value) -> Value:
+    """x / y for integer tensors, truncating toward zero."""
+    e = tensor_type(x).element_type
+    if isinstance(e, IntegerType) and e.is_unsigned:
+        return coreai.broadcasting_floor_divide(x, y)
+    zero = coreai.constant(0, dtype=e)
+    neg_one = coreai.constant(-1, dtype=e)
+
+    def negated_magnitude(v: Value) -> Value:
+        positive = coreai.broadcasting_greater(v, zero)
+        return coreai.broadcasting_where(
+            positive, coreai.broadcasting_mul(v, neg_one), v
+        )
+
+    magnitude = coreai.broadcasting_floor_divide(
+        negated_magnitude(x), negated_magnitude(y)
+    )
+    negative = coreai.broadcasting_not_equal(
+        coreai.broadcasting_greater(zero, x), coreai.broadcasting_greater(zero, y)
+    )
+    return coreai.broadcasting_where(
+        negative, coreai.broadcasting_mul(magnitude, neg_one), magnitude
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -196,38 +239,109 @@ def _sign_value(x: Value) -> Value:
 
 
 # ---------------------------------------------------------------------------
-# Float-floor helper (used by Floor, Ceil, Round lowerings)
+# Float floor / ceil (used by the Floor and Ceil lowerings)
 #
-# coreai.broadcasting_floor_divide(x, 1.0) is NOT a floor on floats at
-# runtime — the broadcasting decomposable op resolves to plain divide.
-# Use: trunc-via-int32-cast, then subtract 1 for negative non-integers.
+# floor(x) is floor_divide(x, 1), as in coreai-torch. It must not be built
+# from a float -> int32 -> float cast round trip: Core AI's pre-compilation
+# rewrite (and, on cpu_only, the BNNS backend) fuses that pair into a no-op,
+# which turns floor into the identity.
+#
+# Half-precision operands are widened to f32 around the arithmetic (exact):
+# f16 floor_divide fails to load on the default compute unit, and the ANE
+# drops the outer negation of an f16 ceil.
 # ---------------------------------------------------------------------------
 
 
-def _floor_f(x: Value) -> Value:
-    """floor(x) for floating-point tensors via trunc + correction.
+def _half_as_f32(x: Value, fn: Callable[[Value], Value]) -> Value:
+    """Apply *fn* to x, computing f16/bf16 inputs in f32 and narrowing back."""
+    wide = _cmp_operand(x)
+    result = fn(wide)
+    if wide is x:
+        return result
+    return coreai.cast(result, tensor_type(x).element_type)
 
-    Guard: float32 values with |x| >= 2^31 cannot be represented in int32,
-    causing saturation to ±2147483647 when cast.  However, any float32 with
-    |x| >= 2^24 is already an exact integer (the mantissa has no fractional
-    bits), so floor(x) == x there.  We therefore replace the saturated trunc
-    with x itself for out-of-range values.
-    """
-    e = tensor_type(x).element_type
-    trunc_raw = coreai.cast(coreai.cast(x, np.int32), e)
-    # Out-of-range floats are integral; replace saturated cast result with x.
-    threshold = coreai.constant(float(2**31), dtype=e)
-    in_range = coreai.broadcasting_greater(threshold, coreai.abs_(x))
-    trunc = coreai.broadcasting_where(in_range, trunc_raw, x)
-    zero = coreai.constant(0, dtype=e)
-    one = coreai.constant(1, dtype=e)
-    x_lt_zero = coreai.broadcasting_greater(zero, x)
-    not_integer = coreai.broadcasting_not_equal(x, trunc)
-    # Both booleans originate from comparisons — broadcasting_and is safe.
-    need_correction = coreai.broadcasting_and(x_lt_zero, not_integer)
-    return coreai.broadcasting_where(
-        need_correction, coreai.broadcasting_sub(trunc, one), trunc
+
+def _floor_divide_by_one(x: Value) -> Value:
+    return coreai.broadcasting_floor_divide(
+        x, coreai.constant(1, dtype=tensor_type(x).element_type)
     )
+
+
+def _floor_f(x: Value) -> Value:
+    """floor(x) for floating-point tensors."""
+    return _half_as_f32(x, _floor_divide_by_one)
+
+
+def _ceil_f(x: Value) -> Value:
+    """ceil(x) = -floor(-x) for floating-point tensors."""
+
+    def ceil(v: Value) -> Value:
+        neg_one = coreai.constant(-1, dtype=tensor_type(v).element_type)
+        floored = _floor_divide_by_one(coreai.broadcasting_mul(v, neg_one))
+        return coreai.broadcasting_mul(floored, neg_one)
+
+    return _half_as_f32(x, ceil)
+
+
+def _trunc_f(x: Value) -> Value:
+    """trunc(x): round toward zero, for floating-point tensors."""
+
+    def trunc(v: Value) -> Value:
+        e = tensor_type(v).element_type
+        magnitude = _floor_divide_by_one(coreai.abs_(v))
+        negative = coreai.broadcasting_greater(coreai.constant(0, dtype=e), v)
+        return coreai.broadcasting_where(
+            negative,
+            coreai.broadcasting_mul(magnitude, coreai.constant(-1, dtype=e)),
+            magnitude,
+        )
+
+    return _half_as_f32(x, trunc)
+
+
+# ---------------------------------------------------------------------------
+# Cast
+#
+# A cast that undoes the previous one (A -> B -> A) is fused into a no-op even
+# when the pair changes values: Core AI's pre-compilation rewrite does it for
+# float -> int32 -> float, and the cpu_only (BNNS) backend for every such pair
+# it sees, bool included. Two shapes of ONNX Cast are therefore never emitted
+# as a bare coreai.cast:
+#   * to bool          -> x != 0, a comparison (ONNX: any nonzero is True)
+#   * int back to float, where the int was itself cast from a float
+#                      -> trunc() of that float, the value the pair computes
+#     (values outside the integer type's range are undefined in ONNX).
+# ---------------------------------------------------------------------------
+
+
+def _is_bool(element_type: Type) -> bool:
+    return isinstance(element_type, IntegerType) and element_type.width == 1
+
+
+def _truncated_float(x: Value) -> Value | None:
+    """The float value x was cast from, if x is the result of float -> int."""
+    if not isinstance(x, OpResult) or x.owner.name != "coreai.cast":
+        return None
+    source = operand_values(x.owner)[0]
+    if isinstance(tensor_type(source).element_type, FloatType):
+        return source
+    return None
+
+
+def _cast(x: Value, target: Type) -> Value:
+    """ONNX Cast of x to the Core AI element type *target*."""
+    source = tensor_type(x).element_type
+    if source == target:
+        return x
+    if _is_bool(target):
+        operand = _cmp_operand(x)
+        zero = coreai.constant(0, dtype=tensor_type(operand).element_type)
+        return coreai.broadcasting_not_equal(operand, zero)
+    if isinstance(target, FloatType) and isinstance(source, IntegerType):
+        truncated = _truncated_float(x)
+        if truncated is not None:
+            return _cast(_trunc_f(truncated), target)
+    return coreai.cast(x, target)
 
 
 # ---------------------------------------------------------------------------

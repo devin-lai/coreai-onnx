@@ -51,8 +51,8 @@ coreai-onnx convert <model.onnx> -o <output.aimodel> [options]
 Options:
 
 - `-o`, `--output` — output `.aimodel` path (required)
-- `--no-optimize` — skip the `optimize()` step after conversion (optimisation runs
-  by default)
+- `--no-optimize` — skip Core AI's pre-compilation rewrite (optimisation) after
+  conversion (it runs by default)
 - `--name` — entrypoint function name (default: `main`)
 - `--no-validate` — skip the pre-conversion ONNX Runtime validation gate
 - `--no-verify` — skip the post-conversion precision check

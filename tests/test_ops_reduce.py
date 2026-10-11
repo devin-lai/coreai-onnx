@@ -8,7 +8,9 @@
 import zlib
 
 import numpy as np
+import onnx
 import pytest
+from onnx import TensorProto, helper
 
 import coreai_onnx
 from coreai_onnx.errors import ConversionError
@@ -26,6 +28,24 @@ pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 def _seed(key: str) -> int:
     return zlib.crc32(key.encode()) & 0xFFFFFFFF
+
+
+def _dynamic_model(node, input_vi, initializers=None):
+    """A one-node model whose input carries dynamic dims."""
+    graph = helper.make_graph(
+        [node],
+        "dynamic",
+        [input_vi],
+        [helper.make_tensor_value_info("y", TensorProto.UNDEFINED, None)],
+        initializer=[
+            onnx.numpy_helper.from_array(a, name=n)
+            for n, a in (initializers or {}).items()
+        ],
+    )
+    model = helper.make_model(
+        graph, opset_imports=[helper.make_opsetid("", 22)], ir_version=10
+    )
+    return onnx.shape_inference.infer_shapes(model, strict_mode=True)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +149,42 @@ async def test_reduce_sum_int32():
     await assert_parity(model, {"x": x})
 
 
+@pytest.mark.parametrize("axes", [None, [1], [0, 2]], ids=["all", "axis1", "axes02"])
+@pytest.mark.parametrize("keepdims", [0, 1])
+async def test_reduce_mean_int32_truncates(axes, keepdims):
+    # ONNX ReduceMean accepts integers; the result is the truncated integer
+    # mean. coreai.reduce_mean is float-only, so this used to fail to compile.
+    rng = np.random.default_rng(_seed(f"reduce-mean-int32-{axes}-{keepdims}"))
+    x = rng.integers(-50, 50, size=(2, 3, 4)).astype(np.int32)
+    initializers = (
+        {"axes": np.array(axes, dtype=np.int64)} if axes is not None else None
+    )
+    model = single_op_model(
+        "ReduceMean", {"x": x}, attrs={"keepdims": keepdims}, initializers=initializers
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_reduce_mean_int32_dynamic_dims():
+    # The element count comes from the runtime shape.
+    rng = np.random.default_rng(_seed("reduce-mean-int32-dynamic"))
+    x = rng.integers(-50, 50, size=(3, 4, 5)).astype(np.int32)
+    model = _dynamic_model(
+        helper.make_node("ReduceMean", ["x", "axes"], ["y"], keepdims=0),
+        helper.make_tensor_value_info("x", TensorProto.INT32, ["n", 4, "w"]),
+        {"axes": np.array([0, 2], dtype=np.int64)},
+    )
+    await assert_parity(model, {"x": x})
+
+
+async def test_reduce_mean_int32_negative_mean_rounds_toward_zero():
+    x = np.array([[-1, -2, -4], [-7, -8, 10], [1, 2, 4]], dtype=np.int32)
+    model = single_op_model(
+        "ReduceMean", {"x": x}, initializers={"axes": np.array([1], dtype=np.int64)}
+    )
+    await assert_parity(model, {"x": x})
+
+
 # ---------------------------------------------------------------------------
 # Derived reductions
 # ---------------------------------------------------------------------------
@@ -225,13 +281,59 @@ async def test_arg_ops(op, axis, keepdims):
 
 
 @pytest.mark.parametrize("op", ["ArgMax", "ArgMin"])
-def test_arg_select_last_index_unsupported(op):
-    x = np.zeros((2, 3), dtype=np.float32)
-    model = single_op_model(op, {"x": x}, attrs={"select_last_index": 1})
-    converter = coreai_onnx.OnnxConverter()
-    converter.add_onnx_model(model)
-    with pytest.raises(ConversionError, match="select_last_index"):
-        converter.to_coreai()
+@pytest.mark.parametrize("axis", [0, 1, -1])
+@pytest.mark.parametrize("keepdims", [0, 1])
+@pytest.mark.parametrize("select_last_index", [0, 1])
+async def test_arg_ops_with_ties(op, axis, keepdims, select_last_index):
+    # Every slice holds repeated extrema, so first- and last-index answers
+    # differ and select_last_index is actually exercised.
+    x = np.array(
+        [
+            [[1, 5, 5, 0], [0, 0, 3, 3], [2, 2, 2, 2]],
+            [[1, 5, 0, 0], [4, 0, 3, 4], [5, 2, 5, 2]],
+        ],
+        dtype=np.float32,
+    )
+    model = single_op_model(
+        op,
+        {"x": x},
+        attrs={
+            "axis": axis,
+            "keepdims": keepdims,
+            "select_last_index": select_last_index,
+        },
+    )
+    await assert_parity(model, {"x": x})
+
+
+@pytest.mark.parametrize("op", ["ArgMax", "ArgMin"])
+@pytest.mark.parametrize("keepdims", [0, 1])
+@pytest.mark.parametrize("select_last_index", [0, 1])
+async def test_arg_ops_dynamic_axis(op, keepdims, select_last_index):
+    # The reduced dim has no static size: ArgMin with keepdims=0 used to fail
+    # to compile here, and select_last_index needs the runtime size.
+    x = np.array([[1, 5, 5, 0, 5], [0, 0, 3, 3, 0], [2, 2, 2, 2, 2]], dtype=np.float32)
+    model = _dynamic_model(
+        helper.make_node(
+            op,
+            ["x"],
+            ["y"],
+            axis=1,
+            keepdims=keepdims,
+            select_last_index=select_last_index,
+        ),
+        helper.make_tensor_value_info("x", TensorProto.FLOAT, ["n", "m"]),
+    )
+    await assert_parity(model, {"x": x})
+
+
+@pytest.mark.parametrize("op", ["ArgMax", "ArgMin"])
+async def test_arg_select_last_index_int32(op):
+    x = np.array([[3, -9, 3, -9], [7, 7, 7, 7]], dtype=np.int32)
+    model = single_op_model(
+        op, {"x": x}, attrs={"axis": 1, "keepdims": 0, "select_last_index": 1}
+    )
+    await assert_parity(model, {"x": x})
 
 
 async def test_argmin_unsigned_input():
