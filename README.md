@@ -6,30 +6,33 @@
 [![PyPI](https://img.shields.io/pypi/v/coreai-onnx?label=pypi&cacheSeconds=300)](https://pypi.org/project/coreai-onnx/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
-**The missing ONNX path into Apple's next-generation Core AI runtime.**
+**ONNX → Apple Core AI (`.aimodel`) converter for on-device inference.**
 
-coreai-onnx converts existing ONNX exports directly into Apple's `.aimodel`
-format, helping teams bring high-performance AI workloads to the full Apple
-ecosystem — macOS, iOS, iPadOS, visionOS, watchOS, and tvOS — without custom
-export scripts or manual graph surgery.
+Bring ONNX models exported from PyTorch and other ONNX-compatible frameworks
+to Apple's Core AI runtime on Apple silicon. coreai-onnx converts models into
+`.aimodel` bundles with **143 built-in ONNX operator lowerings**, graph
+optimization, and numerical verification against ONNX Runtime.
 
-Built for the Core AI era, it pairs a clean conversion pipeline with ONNX
-Runtime validation, numerical precision reports, fused graph optimizations,
-JSON-first CLI output, and MCP automation. Inspect coverage, convert with
-confidence, and help expand the supported-op surface for Apple's newest
-on-device AI stack.
+Use the **Python API**, **command-line interface (CLI)**, or **Model Context
+Protocol (MCP) server** to inspect operator coverage, convert models, and check
+output precision in your development or AI agent workflow.
 
-## Architecture
+[Documentation](https://devin-lai.github.io/coreai-onnx/) ·
+[Supported ONNX operators](https://devin-lai.github.io/coreai-onnx/coverage.html) ·
+[MCP server](https://devin-lai.github.io/coreai-onnx/mcp.html) ·
+[PyPI](https://pypi.org/project/coreai-onnx/) ·
+[Releases](https://github.com/devin-lai/coreai-onnx/releases)
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/devin-lai/coreai-onnx/main/docs/images/Principle.png" alt="coreai-onnx core architecture schematic: the three entry surfaces over a shared command core, the preprocess-fuse-lower conversion pipeline that emits the .aimodel, and the validation and precision checks that gate it" width="900">
-</p>
+## Install
 
-A high-level map of the conversion path: the three entry surfaces (Python API,
-CLI, and MCP server) over a shared command core, the preprocess → fuse → lower
-pipeline that emits the `.aimodel`, and the ONNX Runtime validation and precision
-checks that gate it. See [docs/cli.md](docs/cli.md) for the JSON envelope and the
-frozen error/warning/exit-code contracts.
+```bash
+pip install coreai-onnx                    # conversion only
+pip install "coreai-onnx[verify]"          # + numerical verification via onnxruntime
+```
+
+Requires **Python 3.11–3.14**. Conversion runs on macOS, Linux, and Windows.
+Executing `.aimodel` bundles requires **macOS 27+ / iOS 27+** with the Core AI
+framework; precision verification runs on macOS 27+.
 
 ## Quickstart
 
@@ -57,8 +60,9 @@ coreai-onnx schema  --json                         # machine-readable capability
 `convert` runs an end-to-end pipeline: it first confirms the model loads and runs
 on ONNX Runtime (and stops with a clear error if it does not), converts and
 optimises it, then prints a precision comparison of the saved `.aimodel` against
-ONNX Runtime. The ONNX Runtime steps are skipped, with a note, when `onnxruntime`
-is not installed or you are not on macOS.
+ONNX Runtime. Input validation runs when `onnxruntime` is installed; the
+precision comparison also requires macOS 27+ with the Core AI runtime. Skipped
+steps are reported with a warning.
 
 A real session on torchvision's MobileNetV3-Small (opset 18):
 
@@ -83,6 +87,18 @@ Converted successfully
 Precision check passed
 ```
 
+## Architecture
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/devin-lai/coreai-onnx/main/docs/images/Principle.png" alt="coreai-onnx core architecture schematic: the three entry surfaces over a shared command core, the preprocess-fuse-lower conversion pipeline that emits the .aimodel, and the validation and precision checks that gate it" width="900">
+</p>
+
+A high-level map of the conversion path: the three entry surfaces (Python API,
+CLI, and MCP server) over a shared command core, the preprocess → fuse → lower
+pipeline that emits the `.aimodel`, and the ONNX Runtime validation and precision
+checks that gate it. See [docs/cli.md](docs/cli.md) for the JSON envelope and the
+frozen error/warning/exit-code contracts.
+
 ## For AI agents
 
 coreai-onnx is built to be driven by agents: every command takes `--json` and
@@ -92,13 +108,6 @@ returns one stable envelope with documented error and exit codes.
 - **MCP server** — `pip install "coreai-onnx[mcp]"`, then register `coreai-onnx-mcp` (stdio); tools return the same JSON envelope ([docs](https://devin-lai.github.io/coreai-onnx/mcp.html)).
 - **`coreai-onnx schema --json`** — the full machine-readable capability contract.
 - **[llms.txt](https://devin-lai.github.io/coreai-onnx/llms.txt)** — the llms.txt index, served from the docs site.
-
-## Install
-
-```bash
-pip install coreai-onnx                    # conversion only
-pip install "coreai-onnx[verify]"          # + numerical verification via onnxruntime
-```
 
 ## Features
 
@@ -197,6 +206,10 @@ append-only contract — see [docs/cli.md](docs/cli.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, the op-lowering workflow,
 and the PR checklist.
+
+- [Request an ONNX operator](https://github.com/devin-lai/coreai-onnx/issues/new?template=op_request.yml) — include the op, opset, and model use case.
+- [Report a conversion or verification bug](https://github.com/devin-lai/coreai-onnx/issues/new?template=bug_report.yml) — include a minimal model and the command output.
+- [Add a custom lowering](https://devin-lai.github.io/coreai-onnx/custom-lowerings.html) — extend coverage for the operators your model needs.
 
 ## Attribution
 
