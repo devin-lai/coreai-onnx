@@ -6,6 +6,31 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-15
+
+### Fixed
+
+- Verification rejects mismatched output shapes, preserves zero-length input
+  dimensions and float64 NaN/Inf values, and computes PSNR without overflow or
+  underflow from squaring errors. Precision warnings now appear in human CLI
+  output and report the requested PSNR threshold correctly.
+- Graph cleanup and fusion preserve custom-domain operators. Identity removal
+  respects shadowed source names in subgraphs, and GELU fusion preserves ranks
+  introduced by broadcasting constants.
+- Dynamic `Flatten`, scalar `GatherND`, infinite-input `ReduceLogSumExp`, and
+  scalar attention masks now convert and execute correctly.
+- `MeanVarianceNormalization` includes the ONNX-specified `1e-9` epsilon after
+  the standard deviation. Some ONNX Runtime versions omit this epsilon; checks
+  on constant or very small inputs may therefore report a reference discrepancy.
+- Constant folding checks expanding tensors before allocation. Large constant
+  `Range` and `ConstantOfShape` operations remain compact during lowering.
+- Failed reconversions preserve existing `.aimodel` bundles. Replacements are
+  staged before installation, with rollback and backup retention on I/O errors.
+- Runtime checks enforce macOS 27+, and `verify` reports malformed model files
+  as `invalid_model_file` rather than a precision-check error.
+- The MCP extra requires SDK 1.10.0+, which introduced structured tool outputs,
+  and tool annotations remain compatible with that minimum version.
+
 ## [1.2.0] - 2026-10-11
 
 Compatibility updates for coreai-core 1.0.0b3, with operator fixes and broader
@@ -138,6 +163,7 @@ Initial public release.
   plus a portable `skills/onnx-to-coreai` agent skill.
 - Agent docs: AGENTS.md playbook and llms.txt.
 
+[1.2.1]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.2.1
 [1.2.0]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.2.0
 [1.1.2]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.2
 [1.1.1]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.1

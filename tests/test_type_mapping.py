@@ -93,6 +93,15 @@ def test_narrow_array_float64() -> None:
     assert out[1] == np.finfo(np.float32).max
 
 
+def test_narrow_array_float64_preserves_nonfinite_values() -> None:
+    values = np.array([np.inf, -np.inf, np.nan, 1e300], dtype=np.float64)
+    result = narrow_array(values, context="input")
+    np.testing.assert_array_equal(
+        result,
+        np.array([np.inf, -np.inf, np.nan, np.finfo(np.float32).max], np.float32),
+    )
+
+
 @pytest.mark.parametrize(
     ("value", "dtype", "narrowed"),
     [

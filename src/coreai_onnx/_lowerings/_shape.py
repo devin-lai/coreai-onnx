@@ -549,9 +549,7 @@ def replace_flatten(
     # Both halves contain dynamic dims: compute the head extent at runtime.
     shp = coreai.cast(coreai.get_shape(x), np.int32)
     head = coreai.reduce_product(coreai.slice_(shp, [0], [axis], [1]), [0])
-    target = coreai.concat(
-        0, [coreai.expand_dims(head, [0]), coreai.constant([-1], dtype=np.int32)]
-    )
+    target = coreai.concat(0, [head, coreai.constant([-1], dtype=np.int32)])
     return coreai.reshape(x, target)
 
 
@@ -894,7 +892,9 @@ def replace_constant_of_shape(
     arr = _const_array(shape_v)
     if arr is not None:
         dims = [int(d) for d in arr.reshape(-1)]
-        return coreai.constant(np.full(dims, fill))
+        # Keep large fills as a scalar broadcast; emitting np.full here would
+        # undo preprocessing's size cap before the IR fold guard can help.
+        return coreai.broadcast_to(coreai.constant(np.asarray(fill)), dims)
     # ui32 cast: the broadcast_to builder introspects a signed shape's owner,
     # which crashes when the shape is a block argument (graph input).
     return coreai.broadcast_to(
@@ -911,12 +911,8 @@ def replace_range(
     values_map: dict[str, Value], node: onnx.NodeProto, loc: Location
 ) -> Value:
     start_v, limit_v, delta_v = operands(values_map, node, [0, 1, 2])
-    start_a = _const_array(start_v)
-    limit_a = _const_array(limit_v)
-    delta_a = _const_array(delta_v)
-    if start_a is not None and limit_a is not None and delta_a is not None:
-        start, limit, delta = (a.reshape(-1)[0] for a in (start_a, limit_a, delta_a))
-        return coreai.constant(np.arange(start, limit, delta))
+    # Constant ranges that survived preprocessing exceeded its folding cap.
+    # Keep them as range ops, with their original dtype and no dense arange.
 
     def to_scalar(v: Value) -> Value:
         if tensor_type(v).rank > 0:

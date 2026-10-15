@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coreai-onnx"
-version = "1.2.0"
+version = "1.2.1"
 description = "ONNX conversion tooling for Apple platform runtimes, with validation, precision checks, float16 repair, and command/API surfaces."
 readme = { text = """# coreai-onnx
 
@@ -51,10 +51,11 @@ verify = ["onnxruntime"]
 # anyio is imported directly by _mcp.py; declare it rather than relying on
 # the MCP SDK's transitive dependency. The MCP SDK is capped below 2: 2.x
 # renamed FastMCP to MCPServer and the server here is written against 1.x.
-mcp = ["mcp>=1.2,<2", "anyio>=4.0"]
+# structured_output on FastMCP.tool was introduced in 1.10.0.
+mcp = ["mcp>=1.10.0,<2", "anyio>=4.0"]
 test = [
     "onnxruntime",
-    "mcp>=1.2,<2",
+    "mcp>=1.10.0,<2",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",

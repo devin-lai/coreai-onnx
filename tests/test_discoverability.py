@@ -115,7 +115,7 @@ def test_pyproject_metadata_complete():
     project = data["project"]
     classifiers = project["classifiers"]
     assert project["name"] == "coreai-onnx"
-    assert project["version"] == "1.2.0"
+    assert project["version"] == "1.2.1"
     assert "Development Status :: 5 - Production/Stable" in classifiers
     assert "Programming Language :: Python :: 3.11" in classifiers
     assert "Programming Language :: Python :: 3.12" in classifiers
@@ -308,6 +308,24 @@ def test_pyproject_mcp_extra_and_script():
     )
     scripts = data["project"]["scripts"]
     assert scripts.get("coreai-onnx-mcp") == "coreai_onnx._mcp:main"
+
+
+def test_mcp_dependency_requires_structured_output_support():
+    import tomllib
+
+    from packaging.requirements import Requirement
+
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+    for extra in ("mcp", "test"):
+        requirement = next(
+            Requirement(dep)
+            for dep in data["project"]["optional-dependencies"][extra]
+            if Requirement(dep).name == "mcp"
+        )
+        assert "1.2.0" not in requirement.specifier
+        assert "1.9.4" not in requirement.specifier
+        assert "1.10.0" in requirement.specifier
+        assert "2.0.0" not in requirement.specifier
 
 
 def test_runtime_imports_use_declared_dependencies_only():

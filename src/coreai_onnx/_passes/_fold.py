@@ -5,6 +5,7 @@
 
 """Constant folding: evaluate statically-known foldable nodes and inline them."""
 
+import math
 import warnings
 
 import numpy as np
@@ -54,6 +55,62 @@ _FOLDABLE = {
 _FOLD_SIZE_LIMIT = 1 << 24  # 16 MiB
 
 
+def _oversized_result(node: onnx.NodeProto, feeds: dict[str, np.ndarray]) -> bool:
+    """Bound expanding folds before ReferenceEvaluator allocates their output.
+
+    The post-evaluation cap still checks every result. These estimates cover
+    the foldable operations that can grow beyond their already-capped inputs.
+    """
+    op = node.op_type
+    values = [feeds[name] for name in node.input]
+    attributes = {a.name: onnx.helper.get_attribute_value(a) for a in node.attribute}
+    try:
+        if op == "ConstantOfShape":
+            shape = tuple(int(d) for d in values[0].reshape(-1))
+            value = attributes.get("value")
+            dtype = value.data_type if value is not None else onnx.TensorProto.FLOAT
+            itemsize = onnx.helper.tensor_dtype_to_np_dtype(dtype).itemsize
+        elif op == "Range":
+            start, limit, delta = (a.item() for a in values)
+            if values[0].dtype.kind in "iu":
+                count = max(0, -((start - limit) // delta))
+            else:
+                count = max(0, math.ceil((limit - start) / delta))
+            return count * values[0].dtype.itemsize > _FOLD_SIZE_LIMIT
+        elif op == "Concat":
+            return sum(a.nbytes for a in values) > _FOLD_SIZE_LIMIT
+        elif op == "Expand":
+            shape = np.broadcast_shapes(
+                values[0].shape, tuple(int(d) for d in values[1])
+            )
+            itemsize = values[0].dtype.itemsize
+        elif op == "Tile":
+            shape = tuple(
+                d * int(r) for d, r in zip(values[0].shape, values[1], strict=True)
+            )
+            itemsize = values[0].dtype.itemsize
+        elif op in {"Add", "Sub", "Mul", "Div", "Mod", "Equal", "Where"}:
+            shape = np.broadcast_shapes(*(a.shape for a in values))
+            itemsize = (
+                1 if op == "Equal" else values[1 if op == "Where" else 0].dtype.itemsize
+            )
+        elif op == "Gather":
+            data, indices = values
+            axis = int(attributes.get("axis", 0)) % data.ndim
+            shape = data.shape[:axis] + indices.shape + data.shape[axis + 1 :]
+            itemsize = data.dtype.itemsize
+        elif op == "Cast":
+            shape = values[0].shape
+            itemsize = onnx.helper.tensor_dtype_to_np_dtype(attributes["to"]).itemsize
+        else:
+            return False
+        return math.prod(shape) * itemsize > _FOLD_SIZE_LIMIT
+    except (ValueError, TypeError, OverflowError, ZeroDivisionError, IndexError):
+        # Invalid or unbounded shapes cannot be safely folded. Leave them for
+        # the lowering/validator to diagnose, without speculative allocations.
+        return True
+
+
 def _fold_constants_graph(
     model: onnx.ModelProto, g: onnx.GraphProto, shadowed_inputs: list[str]
 ) -> None:
@@ -74,7 +131,7 @@ def _fold_constants_graph(
         if t.raw_data:
             return len(t.raw_data)
         itemsize = onnx.helper.tensor_dtype_to_np_dtype(t.data_type).itemsize
-        return int(np.prod(t.dims)) * itemsize if t.dims else itemsize
+        return math.prod(t.dims) * itemsize
 
     def _initializer_array(name: str) -> np.ndarray:
         arr = init_cache.get(name)
@@ -104,6 +161,8 @@ def _fold_constants_graph(
     new_initializers: list[tuple[str, np.ndarray]] = []
 
     def _try_fold(node: onnx.NodeProto) -> dict[str, np.ndarray] | None:
+        if node.domain not in ("", "ai.onnx"):
+            return None
         if node.op_type == "Constant":
             attr = node.attribute[0]
             if attr.name == "value":
@@ -135,6 +194,8 @@ def _fold_constants_graph(
         feeds = {
             i: folded[i] if i in folded else _initializer_array(i) for i in node.input
         }
+        if _oversized_result(node, feeds):
+            return None
         node_model = onnx.helper.make_model(
             onnx.helper.make_graph(
                 [node],

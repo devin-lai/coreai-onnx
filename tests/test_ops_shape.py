@@ -35,6 +35,36 @@ INT64_MAX = np.iinfo(np.int64).max
 INT64_MIN = np.iinfo(np.int64).min
 
 
+@pytest.mark.parametrize("op_type", ["ConstantOfShape", "Range"])
+def test_constant_expansion_lowering_stays_compact(op_type, monkeypatch):
+    from coreai_onnx._passes import _fold
+
+    monkeypatch.setattr(_fold, "_FOLD_SIZE_LIMIT", 1024)
+    if op_type == "ConstantOfShape":
+        initializers = {"shape": np.array([100_000], np.int64)}
+    else:
+        initializers = {
+            "start": np.array(0, np.int64),
+            "end": np.array(100_000, np.int64),
+            "delta": np.array(1, np.int64),
+        }
+    model = single_op_model(op_type, {}, initializers=initializers)
+    program = coreai_onnx.convert(model)
+    ir = str(mlir_module_of(program))
+    assert len(ir) < 10_000
+
+
+@pytest.mark.parametrize("axis", [1, 2, -1])
+async def test_flatten_dynamic_dimensions_on_both_sides(axis):
+    model = _manual_model(
+        [helper.make_node("Flatten", ["x"], ["out0"], axis=axis)],
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, ["b", "c", "d"])],
+        ["out0"],
+    )
+    x = np.arange(24, dtype=np.float32).reshape(2, 3, 4)
+    await assert_parity(model, {"x": x})
+
+
 def _seed(key: str) -> int:
     return zlib.crc32(key.encode()) & 0xFFFFFFFF
 

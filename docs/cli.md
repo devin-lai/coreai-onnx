@@ -222,7 +222,7 @@ and works on any platform).
   "result": {
     "tool": {
       "name": "coreai-onnx",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "schema_version": 1,
       "description": "ONNX conversion tooling for Apple platform runtimes, with validation, precision checks, float16 repair, and command/API surfaces.",
       "global_options": [

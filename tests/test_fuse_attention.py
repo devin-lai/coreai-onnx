@@ -65,6 +65,18 @@ def _yolo_model(B=1, H=2, L=9, dk=4, dv=8, scale=0.5):
     )
 
 
+@pytest.mark.parametrize("node_index", range(5))
+def test_attention_fusion_preserves_custom_domain_nodes(node_index):
+    # Retain the original annotations so a custom op with the same shape as
+    # the standard op cannot accidentally match the attention pattern.
+    model = onnx.shape_inference.infer_shapes(_yolo_model())
+    model.graph.node[node_index].domain = "custom"
+    model.opset_import.append(helper.make_opsetid("custom", 1))
+    fuse_attention(model)
+    assert len(model.graph.node) == 5
+    assert model.graph.node[node_index].domain == "custom"
+
+
 def _standard_model(
     B=2,
     H=3,
@@ -192,6 +204,14 @@ def test_fuse_with_additive_mask():
     fused = fuse_attention(_standard_model(mask=True))
     (sdpa,) = _sdpa_nodes(fused)
     assert list(sdpa.input)[3] == "mask"
+
+
+@coreai_runtime_test
+async def test_attention_scalar_additive_mask():
+    model = _standard_model(mask=True)
+    model.graph.input[-1].CopyFrom(_vi("mask", []))
+    feeds = _random_feeds(model)
+    await assert_parity(model, feeds)
 
 
 def test_fuse_rank3():

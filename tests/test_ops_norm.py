@@ -26,6 +26,28 @@ from .helpers import (
 pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 
+@pytest.mark.parametrize("magnitude", [0.0, 1e-9])
+async def test_mean_variance_normalization_epsilon(tmp_path, magnitude):
+    x = np.array([[-magnitude, magnitude]], dtype=np.float32)
+    model = single_op_model("MeanVarianceNormalization", {"x": x}, attrs={"axes": [1]})
+    # The ONNX function adds 1e-9 to the standard deviation. ORT's native
+    # kernel omits it, so use the published ONNX formula as the oracle.
+    expected = (x - x.mean(axis=1, keepdims=True)) / (
+        x.std(axis=1, keepdims=True) + np.float32(1e-9)
+    )
+    path = tmp_path / "mvn.aimodel"
+    coreai_onnx.convert(model).save_asset(path)
+    report = await coreai_onnx.verify(
+        model,
+        path,
+        inputs={"x": x},
+        expected={"out0": expected},
+        compute_unit="cpu_only",
+        isolate_execution=True,
+    )
+    assert report.passed
+
+
 def _seed(key: str) -> int:
     return zlib.crc32(key.encode()) & 0xFFFFFFFF
 

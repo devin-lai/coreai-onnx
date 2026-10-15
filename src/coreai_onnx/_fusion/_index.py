@@ -35,7 +35,7 @@ def _graph_tensor_infos(graph: onnx.GraphProto) -> dict[str, _TensorInfo]:
     infos: dict[str, _TensorInfo] = {}
     for vi in list(graph.input) + list(graph.output) + list(graph.value_info):
         tt = vi.type.tensor_type
-        if not tt.shape.dim:
+        if not tt.HasField("shape"):
             continue
         dims = tuple(
             d.dim_value
@@ -76,7 +76,14 @@ class _GraphIndex:
         infos: dict[str, _TensorInfo],
         scalars: dict[str, np.ndarray],
     ) -> "_GraphIndex":
-        by_output = {out: n for n in graph.node for out in n.output}
+        # A custom op sharing a standard op's name has independent semantics.
+        # Keep its uses in consumer_count, but never match it as a producer.
+        by_output = {
+            out: n
+            for n in graph.node
+            if n.domain in ("", "ai.onnx")
+            for out in n.output
+        }
         consumer_count: dict[str, int] = {}
         for n in graph.node:
             for name in n.input:

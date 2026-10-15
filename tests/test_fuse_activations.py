@@ -107,6 +107,28 @@ def _silu_model(B=2, D=8, swapped=False):
     )
 
 
+@pytest.mark.parametrize("node_index", range(5))
+def test_gelu_fusion_preserves_custom_domain_nodes(node_index):
+    model = _gelu_erf_model()
+    model.graph.node[node_index].domain = "custom"
+    model.opset_import.append(helper.make_opsetid("custom", 1))
+    fuse_activations(model)
+    assert len(model.graph.node) == 5
+    assert model.graph.node[node_index].domain == "custom"
+
+
+@pytest.mark.parametrize("constant_name", ["sqrt2", "one", "half"])
+def test_gelu_fusion_preserves_broadcast_rank(constant_name):
+    model = _gelu_erf_model()
+    for init in model.graph.initializer:
+        if init.name == constant_name:
+            value = numpy_helper.to_array(init).reshape(1, 1, 1)
+            init.CopyFrom(numpy_helper.from_array(value, constant_name))
+    model.graph.output[0].CopyFrom(_vi("y", [1, 2, 8]))
+    fuse_activations(model)
+    assert len(model.graph.node) == 5
+
+
 def _if_silu_model(B=2, D=8):
     then_g = helper.make_graph(
         [

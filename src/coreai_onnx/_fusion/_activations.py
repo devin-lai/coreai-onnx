@@ -16,7 +16,7 @@ import numpy as np
 import onnx
 from onnx import helper
 
-from ._index import _graph_scalars, _GraphIndex
+from ._index import _graph_scalars, _graph_tensor_infos, _GraphIndex, _TensorInfo
 from ._rewrite import (
     _apply_matches,
     _build_consumers,
@@ -247,7 +247,9 @@ _ACT_MATCHERS = {
 
 
 def _fuse_activation_graph(
-    graph: onnx.GraphProto, outer_scalars: dict[str, np.ndarray]
+    graph: onnx.GraphProto,
+    outer_scalars: dict[str, np.ndarray],
+    outer_infos: dict[str, _TensorInfo],
 ) -> bool:
     """Rewrite decomposed activation chains in *graph* and nested subgraphs.
 
@@ -256,19 +258,38 @@ def _fuse_activation_graph(
     """
     local_scalars = _graph_scalars(graph)
     scalars = {**outer_scalars, **local_scalars}
+    local_infos = _graph_tensor_infos(graph)
+    infos = {**outer_infos, **local_infos}
     # A name bound locally in this scope shadows an outer initializer captured by
     # the same name. When it does, the local binding is a runtime value here, so
     # the stale outer scalar must not be visible to matchers (it would bake a
     # wrong constant into a fused activation). Local bindings are node outputs,
     # subgraph formal inputs (Loop/Scan body params), and initializers; only
     # size-1 initializers survive as scalars (they are kept in local_scalars).
-    _drop_shadowed_scalars(scalars, _local_bindings(graph), local_scalars)
-    idx = _GraphIndex.build(graph, {}, scalars)
+    bindings = _local_bindings(graph)
+    _drop_shadowed_scalars(scalars, bindings, local_scalars)
+    for name in bindings - local_infos.keys():
+        infos.pop(name, None)
+    idx = _GraphIndex.build(graph, infos, scalars)
     consumers = _build_consumers(graph)
 
     def match_one(n):
         matcher = _ACT_MATCHERS.get(n.op_type)
-        return None if matcher is None else matcher(n, idx, consumers)
+        match = None if matcher is None else matcher(n, idx, consumers)
+        if match is not None:
+            # Size-one constants can still add leading dimensions through
+            # broadcasting. A fused unary activation preserves x's rank.
+            dims = idx.dims(match.x)
+            for node in match.nodes:
+                for name in node.input:
+                    scalar = scalars.get(name)
+                    if (
+                        scalar is not None
+                        and scalar.ndim
+                        and (dims is None or scalar.ndim > len(dims))
+                    ):
+                        return None
+        return match
 
     matches = _greedy_claim(graph, match_one)
     needs_custom_opset = any(m.domain == "coreai_onnx" for m in matches)
@@ -292,7 +313,7 @@ def _fuse_activation_graph(
     for n in graph.node:
         for sg in _subgraphs(n):
             needs_custom_opset = (
-                _fuse_activation_graph(sg, scalars) or needs_custom_opset
+                _fuse_activation_graph(sg, scalars, infos) or needs_custom_opset
             )
     return needs_custom_opset
 
@@ -315,7 +336,7 @@ def fuse_activations(model: onnx.ModelProto) -> onnx.ModelProto:
     If/Loop subgraphs so branch-wrapped exports get the same fused CoreAI
     primitives as top-level graphs.
     """
-    if _fuse_activation_graph(model.graph, {}) and not any(
+    if _fuse_activation_graph(model.graph, {}, {}) and not any(
         oi.domain == "coreai_onnx" for oi in model.opset_import
     ):
         model.opset_import.append(helper.make_opsetid("coreai_onnx", 1))

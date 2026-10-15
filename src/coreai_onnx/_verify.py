@@ -54,9 +54,7 @@ def generate_inputs(
                 f"cannot generate inputs for '{vi.name}': unsupported dtype {name}"
             )
         shape = tuple(
-            d.dim_value
-            if d.HasField("dim_value") and d.dim_value > 0
-            else dynamic_dim_size
+            d.dim_value if d.HasField("dim_value") else dynamic_dim_size
             for d in tensor_type.shape.dim
         )
         if dtype.kind == "f":
@@ -190,6 +188,18 @@ def _compare(
     atol: float | None,
     min_psnr: float | None = None,
 ) -> OutputReport:
+    # Broadcasting is useful inside a model, but must never hide an output
+    # shape error during verification (including scalar vs length-one).
+    if expected.shape != got.shape:
+        return OutputReport(
+            name=name,
+            max_abs_error=float("inf"),
+            max_rel_error=float("inf"),
+            psnr=float("-inf"),
+            passed=False,
+            expected_nonfinite=int(np.count_nonzero(~np.isfinite(expected))),
+            elementwise_passed=False,
+        )
     if rtol is None:
         rtol = _F16_RTOL if expected.dtype == np.float16 else _DEFAULT_RTOL
     if atol is None:
@@ -203,7 +213,9 @@ def _compare(
     # not poison every number in the report.
     finite = np.isfinite(e) & np.isfinite(g)
     expected_nonfinite = int(e.size - np.count_nonzero(np.isfinite(e)))
-    abs_err = np.abs(np.where(finite, g - e, 0.0))
+    diff = np.zeros_like(e)
+    np.subtract(g, e, out=diff, where=finite)
+    abs_err = np.abs(diff)
     max_abs = float(abs_err.max()) if abs_err.size else 0.0
     denom = np.abs(np.where(finite, e, 0.0))
     # Relative error reads 0.0 where expected == 0; max_abs_error covers those
@@ -211,16 +223,24 @@ def _compare(
     rel = np.where(denom > 0, abs_err / np.where(denom > 0, denom, 1.0), 0.0)
     max_rel = float(rel.max()) if rel.size else 0.0
     n_finite = int(np.count_nonzero(finite))
-    rmse = float(np.sqrt(np.sum(abs_err**2) / n_finite)) if n_finite else 0.0
+    # Scale before squaring: large/small float64 references otherwise turn a
+    # finite RMSE into infinity/zero and can falsely pass the PSNR threshold.
+    rmse = max_abs
+    if n_finite and 0.0 < max_abs < float("inf"):
+        rmse *= float(np.sqrt(np.sum((abs_err / max_abs) ** 2) / n_finite))
     if rmse == 0.0:
         psnr = float("inf")
     else:
         peak = float(denom.max()) if denom.size else 0.0
         # peak == 0 means an all-zero reference: SNR is undefined, and -inf
         # signals "zero signal, nonzero noise" rather than a metric failure.
-        psnr = float(20 * np.log10(peak / rmse)) if peak > 0 else float("-inf")
+        psnr = (
+            float(20 * (np.log10(peak) - np.log10(rmse))) if peak > 0 else float("-inf")
+        )
     if expected.dtype.kind == "f":
-        elementwise = bool(np.allclose(got, expected, rtol=rtol, atol=atol, equal_nan=True))
+        elementwise = bool(
+            np.allclose(got, expected, rtol=rtol, atol=atol, equal_nan=True)
+        )
         passed = elementwise
         if not passed and min_psnr is not None:
             # PSNR-based acceptance for outputs whose magnitude spread makes
