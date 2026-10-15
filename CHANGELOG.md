@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-15
+
 ### Fixed
 
 - Verification rejects mismatched output shapes, preserves zero-length input
@@ -161,6 +163,7 @@ Initial public release.
   plus a portable `skills/onnx-to-coreai` agent skill.
 - Agent docs: AGENTS.md playbook and llms.txt.
 
+[1.2.1]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.2.1
 [1.2.0]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.2.0
 [1.1.2]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.2
 [1.1.1]: https://github.com/devin-lai/coreai-onnx/releases/tag/v1.1.1

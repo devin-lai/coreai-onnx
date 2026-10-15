@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coreai-onnx"
-version = "1.2.0"
+version = "1.2.1"
 description = "ONNX conversion tooling for Apple platform runtimes, with validation, precision checks, float16 repair, and command/API surfaces."
 readme = { text = """# coreai-onnx
 
