@@ -46,6 +46,29 @@ def test_remove_identity():
     assert m.graph.node[0].input[0] == "x"
 
 
+@pytest.mark.parametrize("op_type", ["Identity", "Constant", "Shape"])
+def test_preprocess_preserves_custom_domain_operators(op_type):
+    kwargs = {}
+    inputs = ["x"]
+    if op_type == "Constant":
+        inputs = []
+        kwargs["value"] = numpy_helper.from_array(np.array([2.0], np.float32))
+    model = _model(
+        [
+            helper.make_node(op_type, inputs, ["t"], domain="custom", **kwargs),
+            helper.make_node("Identity", ["t"], ["y"]),
+        ],
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1])],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    model.opset_import.append(helper.make_opsetid("custom", 1))
+    processed = preprocess(model)
+    assert [(n.domain, n.op_type) for n in processed.graph.node] == [
+        ("custom", op_type),
+        ("", "Identity"),
+    ]
+
+
 def test_identity_feeding_graph_output_is_kept_correct():
     m = _model(
         [helper.make_node("Identity", ["x"], ["y"])],
@@ -237,6 +260,35 @@ def test_remove_identity_does_not_rewrite_shadowed_subgraph_name():
     if_node = next(n for n in cleaned.graph.node if n.op_type == "If")
     tb = next(a.g for a in if_node.attribute if a.name == "then_branch")
     assert list(tb.node[0].input) == ["t", "t"]
+
+
+def test_remove_identity_does_not_capture_shadowed_source():
+    branch = helper.make_graph(
+        [helper.make_node("Add", ["alias", "x"], ["out"])],
+        "branch",
+        [],
+        [helper.make_tensor_value_info("out", TensorProto.FLOAT, [1])],
+        initializer=[numpy_helper.from_array(np.array([10], np.float32), "x")],
+    )
+    model = _model(
+        [
+            helper.make_node("Identity", ["x"], ["alias"]),
+            helper.make_node(
+                "If", ["cond"], ["y"], then_branch=branch, else_branch=branch
+            ),
+        ],
+        [
+            helper.make_tensor_value_info("x", TensorProto.FLOAT, [1]),
+            helper.make_tensor_value_info("cond", TensorProto.BOOL, []),
+        ],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, [1])],
+    )
+    onnx.checker.check_model(model)
+    feed = {"x": np.array([2], np.float32), "cond": np.array(True)}
+    before = run_onnxruntime(model, feed)[0]
+    after = run_onnxruntime(remove_identity(model), feed)[0]
+    np.testing.assert_array_equal(before, [12.0])
+    np.testing.assert_array_equal(after, before)
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +525,74 @@ def test_fold_constants_caps_giant_results():
     m = fold_constants(m)
     assert [n.op_type for n in m.graph.node] == ["ConstantOfShape", "Add", "Add"]
     assert all(i.ByteSize() < 1 << 24 for i in m.graph.initializer)
+
+
+@pytest.mark.parametrize(
+    ("op_type", "feeds", "attributes"),
+    [
+        ("ConstantOfShape", {"shape": np.array([100, 100], np.int64)}, {}),
+        (
+            "Expand",
+            {"x": np.ones((1,), np.float32), "shape": np.array([100, 100], np.int64)},
+            {},
+        ),
+        (
+            "Tile",
+            {"x": np.ones((10,), np.float32), "reps": np.array([100], np.int64)},
+            {},
+        ),
+        (
+            "Range",
+            {
+                "start": np.array(0, np.int64),
+                "end": np.array(1000, np.int64),
+                "delta": np.array(1, np.int64),
+            },
+            {},
+        ),
+        (
+            "Add",
+            {"x": np.ones((32, 1), np.float32), "y": np.ones((1, 32), np.float32)},
+            {},
+        ),
+        (
+            "Gather",
+            {"x": np.ones((8, 16), np.float32), "i": np.zeros(32, np.int64)},
+            {},
+        ),
+        ("Cast", {"x": np.ones(256, np.uint8)}, {"to": TensorProto.DOUBLE}),
+        (
+            "Concat",
+            {"x": np.ones(200, np.float32), "y": np.ones(200, np.float32)},
+            {"axis": 0},
+        ),
+    ],
+)
+def test_fold_size_guard_runs_before_evaluation(
+    monkeypatch, op_type, feeds, attributes
+):
+    from onnx.reference import ReferenceEvaluator
+
+    from coreai_onnx._passes import _fold
+
+    monkeypatch.setattr(_fold, "_FOLD_SIZE_LIMIT", 1024)
+    model = _model(
+        [helper.make_node(op_type, list(feeds), ["y"], **attributes)],
+        [],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, None)],
+        initializers=[numpy_helper.from_array(a, name) for name, a in feeds.items()],
+    )
+    calls = []
+    original = ReferenceEvaluator.run
+
+    def record_run(self, *args, **kwargs):
+        calls.append(True)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ReferenceEvaluator, "run", record_run)
+    fold_constants(model)
+    assert len(model.graph.node) == 1
+    assert not calls, "oversized output must be rejected before allocating it"
 
 
 def test_fold_constants_skips_giant_inputs():

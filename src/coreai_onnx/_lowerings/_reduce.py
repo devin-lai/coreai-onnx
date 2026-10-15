@@ -125,6 +125,14 @@ def replace_reduce_log_sum_exp(
         return x
     # reduce_max keeps the reduced dims as size 1, so m broadcasts against x.
     m = coreai.reduce_max(x, axes)
+    # Infinite maxima must not be subtracted from themselves: all -inf
+    # slices reduce to -inf, and a slice containing +inf reduces to +inf.
+    # Both cases can use the unshifted exponential sum safely.
+    elem = tensor_type(x).element_type
+    infinite = coreai.broadcasting_equal(
+        coreai.abs_(m), coreai.constant(float("inf"), dtype=elem)
+    )
+    m = coreai.broadcasting_where(infinite, coreai.constant(0, dtype=elem), m)
     sum_exp = coreai.reduce_sum(coreai.exp(coreai.broadcasting_sub(x, m)), axes)
     result = coreai.broadcasting_add(m, coreai.log(sum_exp))
     if not attrs(node).get("keepdims", 1):

@@ -621,7 +621,7 @@ def test_verify_json_nonfinite_metrics_serialize_as_strings(
     import coreai_onnx._service as _service
     from coreai_onnx import OutputReport, VerifyReport
 
-    monkeypatch.setattr(_service.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(_service, "_coreai_runtime_available", lambda: True)
 
     async def _nonfinite_verify(*_a, **_k):
         return VerifyReport(
@@ -660,7 +660,7 @@ def test_verify_json_nonfinite_tolerances_serialize_as_strings(
     import coreai_onnx._service as _service
     from coreai_onnx import OutputReport, VerifyReport
 
-    monkeypatch.setattr(_service.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(_service, "_coreai_runtime_available", lambda: True)
 
     async def _passing_verify(*_a, **_k):
         return VerifyReport(
@@ -710,7 +710,7 @@ def test_verify_json_missing_file_is_io_error(tmp_path, capsys, monkeypatch):
     # re-raise so main()'s _error_from_exception classifies it as io_error.
     import coreai_onnx._service as _service
 
-    monkeypatch.setattr(_service.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(_service, "_coreai_runtime_available", lambda: True)
     rc, env = _run_json(
         [
             "verify",

@@ -15,6 +15,29 @@ from .._utils import (
 )
 
 
+def _bound_names(graph: onnx.GraphProto) -> set[str]:
+    return (
+        {vi.name for vi in graph.input}
+        | {init.name for init in graph.initializer}
+        | {out for node in graph.node for out in node.output}
+    )
+
+
+def _subgraph_scopes(graph: onnx.GraphProto) -> list[tuple[set[str], set[str]]]:
+    """Local bindings and possible outer captures for each descendant scope."""
+    scopes = []
+    for node in graph.node:
+        for sub in iter_node_subgraphs(node):
+            bound = _bound_names(sub)
+            used = {o.name for o in sub.output}
+            for sn in sub.node:
+                used.update(sn.input)
+                used.update(iter_subgraph_inputs(sn))
+            scopes.append((bound, used - bound))
+            scopes.extend(_subgraph_scopes(sub))
+    return scopes
+
+
 def _rewrite_subgraph_inputs(node: onnx.NodeProto, rename: dict[str, str]) -> None:
     """Recursively rewrite subgraph node inputs using *rename*, respecting scope.
 
@@ -28,9 +51,7 @@ def _rewrite_subgraph_inputs(node: onnx.NodeProto, rename: dict[str, str]) -> No
     silently miscompile a checker-valid model.
     """
     for graph in iter_node_subgraphs(node):
-        bound = {vi.name for vi in graph.input}
-        bound.update(init.name for init in graph.initializer)
-        bound.update(out for sn in graph.node for out in sn.output)
+        bound = _bound_names(graph)
         local = {k: v for k, v in rename.items() if k not in bound}
         if not local:
             continue
@@ -43,13 +64,25 @@ def _rewrite_subgraph_inputs(node: onnx.NodeProto, rename: dict[str, str]) -> No
 
 def _remove_identity_graph(g: onnx.GraphProto) -> None:
     output_names = {o.name for o in g.output}
+    scopes = _subgraph_scopes(g)
     rename: dict[str, str] = {}
     kept = []
     for node in g.node:
-        if node.op_type == "Identity" and node.output[0] not in output_names:
-            rename[node.output[0]] = rename.get(node.input[0], node.input[0])
-        else:
-            kept.append(node)
+        if (
+            node.domain in ("", "ai.onnx")
+            and node.op_type == "Identity"
+            and node.output[0] not in output_names
+        ):
+            source = rename.get(node.input[0], node.input[0])
+            # Renaming an outer capture to a locally bound name would change
+            # which tensor the branch reads. Retain the alias in that case.
+            if not any(
+                source in bound and node.output[0] in captures
+                for bound, captures in scopes
+            ):
+                rename[node.output[0]] = source
+                continue
+        kept.append(node)
     for node in kept:
         for i, name in enumerate(node.input):
             if name in rename:

@@ -25,6 +25,7 @@ import asyncio
 import math
 import platform
 import shutil
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -237,6 +238,15 @@ def _onnxruntime_available() -> bool:
     return importlib.util.find_spec("onnxruntime") is not None
 
 
+def _coreai_runtime_available() -> bool:
+    if platform.system() != "Darwin":
+        return False
+    try:
+        return int(platform.mac_ver()[0].split(".", maxsplit=1)[0]) >= 27
+    except (IndexError, ValueError):
+        return False
+
+
 # ---------------------------------------------------------------------------
 # runners (compute, no printing)
 # ---------------------------------------------------------------------------
@@ -308,20 +318,16 @@ class _PrecisionCheck:
     passed: bool
 
 
-def _benign_noise_warning(report) -> dict | None:
+def _benign_noise_warning(report, floor: float) -> dict | None:
     """Warn when an output passed only via the PSNR floor, not elementwise."""
     benign = [o.name for o in report.outputs if o.passed and not o.elementwise_passed]
     if not benign:
         return None
-    worst = min(
-        o.psnr
-        for o in report.outputs
-        if o.passed and not o.elementwise_passed and math.isfinite(o.psnr)
-    )
+    worst = min(o.psnr for o in report.outputs if o.passed and not o.elementwise_passed)
     return _warning(
         "precision_benign_noise",
         f"output(s) {', '.join(benign)} failed the elementwise tolerance but "
-        f"were accepted as benign accumulation noise (PSNR ≥ {_DEFAULT_BENIGN_PSNR_DB:g} "
+        f"were accepted as benign accumulation noise (PSNR ≥ {floor:g} "
         f"dB floor; worst {worst:.1f} dB) — the conversion is faithful",
     )
 
@@ -398,7 +404,7 @@ def _run_precision_check(
         report = _run(args.compute_unit)
         return _PrecisionCheck(
             report,
-            _present(_benign_noise_warning(report)),
+            _present(_benign_noise_warning(report, floor)),
             args.compute_unit,
             report.passed,
         )
@@ -409,7 +415,7 @@ def _run_precision_check(
         primary = _run(None)
         if primary.passed:
             return _PrecisionCheck(
-                primary, _present(_benign_noise_warning(primary)), None, True
+                primary, _present(_benign_noise_warning(primary, floor)), None, True
             )
     except Exception as exc:
         primary = None
@@ -418,11 +424,11 @@ def _run_precision_check(
     fp32 = _run("cpu_only")  # may raise -> precision_check_error
     if not fp32.passed:
         return _PrecisionCheck(
-            fp32, _present(_benign_noise_warning(fp32)), "cpu_only", False
+            fp32, _present(_benign_noise_warning(fp32, floor)), "cpu_only", False
         )
     warnings = _present(
         _hardware_divergence_warning(primary, primary_error),
-        _benign_noise_warning(fp32),
+        _benign_noise_warning(fp32, floor),
     )
     return _PrecisionCheck(fp32, warnings, "cpu_only", True)
 
@@ -444,25 +450,58 @@ def _run_inspect(args: argparse.Namespace) -> _Outcome:
     return _Outcome(exit_code=0 if report.convertible else 1, result=result)
 
 
-def _replace_existing_aimodel(out_path: Path) -> None:
-    """Clear a previous .aimodel bundle so re-converting to the same output
-    path works (save_asset itself cannot overwrite). Only something that is
-    recognizably an .aimodel bundle (a directory with metadata.json and a
-    .mlirb program) is removed; anything else raises OSError -> io_error,
-    so a mistyped -o can never delete unrelated files."""
-    if not out_path.exists():
+def _check_output_path(out_path: Path) -> None:
+    """Allow replacing recognizable bundles only; never follow output symlinks."""
+    if not out_path.exists() and not out_path.is_symlink():
         return
     is_bundle = (
-        out_path.is_dir()
+        not out_path.is_symlink()
+        and out_path.is_dir()
         and (out_path / "metadata.json").is_file()
-        and any(out_path.glob("*.mlirb"))
+        and any(p.is_file() for p in out_path.glob("*.mlirb"))
     )
     if not is_bundle:
         raise OSError(
             f"output path '{out_path}' exists and is not an .aimodel bundle; "
             "refusing to replace it — choose another path or remove it first"
         )
-    shutil.rmtree(out_path)
+
+
+def _save_asset(program, out_path: Path) -> None:
+    """Compile before replacing the previous asset, and roll back on failure.
+
+    Stage beside the destination so the final renames stay on one filesystem.
+    Core AI's save_asset may remove its target before compilation succeeds;
+    it must only receive the staging path, never the user's previous bundle.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    workdir = Path(tempfile.mkdtemp(prefix=".coreai_onnx_", dir=out_path.parent))
+    keep_backup = False
+    try:
+        # Fixed internal names cannot collide with user-chosen output names.
+        staged = workdir / "model.aimodel"
+        program.save_asset(staged, metadata=_asset_metadata())
+        _check_output_path(out_path)
+        backup = workdir / "previous"
+        had_previous = out_path.exists()
+        if had_previous:
+            out_path.rename(backup)
+        try:
+            staged.rename(out_path)
+        except BaseException:
+            if had_previous:
+                try:
+                    backup.rename(out_path)
+                except OSError as exc:
+                    keep_backup = True
+                    raise OSError(
+                        f"could not restore previous asset to '{out_path}'; "
+                        f"the original bundle is preserved at '{backup}'"
+                    ) from exc
+            raise
+    finally:
+        if not keep_backup:
+            shutil.rmtree(workdir)
 
 
 # Metadata written into each .aimodel bundle this converter saves.
@@ -537,11 +576,13 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
     # carries the MLIR diagnostic) instead of letting a binding traceback
     # reach the terminal.
     out_path = Path(args.output)
-    _replace_existing_aimodel(out_path)
+    _check_output_path(out_path)
     try:
         if not args.no_optimize:
             optimize_program(program)
-        program.save_asset(out_path, metadata=_asset_metadata())
+        _save_asset(program, out_path)
+    except OSError:
+        raise
     except Exception as exc:
         return _Outcome(
             exit_code=1,
@@ -567,7 +608,7 @@ def _run_convert(args: argparse.Namespace) -> _Outcome:
     # runtime; skip gracefully off-platform - the .aimodel is already written.
     if not (do_verify and have_ort):
         return _Outcome(exit_code=0, result=result, warnings=warnings)
-    if platform.system() != "Darwin":
+    if not _coreai_runtime_available():
         warnings.append(
             _warning(
                 "platform_no_runtime",
@@ -757,7 +798,7 @@ def _run_schema(args: argparse.Namespace) -> _Outcome:
 def _run_verify(args: argparse.Namespace) -> _Outcome:
     # Probing a coreai import here is useless: the CLI itself already imported
     # coreai at startup, so gate on the actual platform requirement instead.
-    if platform.system() != "Darwin":
+    if not _coreai_runtime_available():
         return _Outcome(
             exit_code=2,
             error=_error(
@@ -766,11 +807,10 @@ def _run_verify(args: argparse.Namespace) -> _Outcome:
             ),
         )
 
+    # Load outside the precision handler so unreadable and malformed files
+    # retain the same io_error/invalid_model_file codes as convert/inspect.
+    model = onnx.load(args.model)
     try:
-        # onnx.load here (not inside the helper) so a missing/unreadable .onnx
-        # raises OSError that propagates to main() as io_error, rather than
-        # being reclassified as a precision_check_error.
-        model = onnx.load(args.model)
         pc = _run_precision_check(model, args.aimodel, args)
     except OSError:
         raise

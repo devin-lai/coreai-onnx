@@ -131,6 +131,11 @@ def replace_gather_nd(
     dims = np.array(tensor_type(x).shape[b : b + d], dtype=np.int64)
     idx = _normalize_indices(idx_v, dims, "GatherND", x, (b, b + d))
     if b == 0:
+        if tensor_type(idx).rank == 1 and d == tensor_type(x).rank:
+            # Like scalar Gather, a rank-0 gather_nd result aborts the GPU
+            # specializer. Gather a one-element vector and squeeze it instead.
+            picked = coreai.gather_nd(input=x, indices=coreai.expand_dims(idx, [0]))
+            return coreai.shrink_dims(picked, [0])
         return coreai.gather_nd(input=x, indices=idx)
 
     # coreai.gather_nd has no batch_dims: flatten the batch dims to one and

@@ -25,6 +25,24 @@ from .helpers import (
 
 pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
+
+async def test_gather_nd_scalar_output(tmp_path):
+    x = np.arange(6, dtype=np.float32).reshape(2, 3)
+    model = single_op_model(
+        "GatherND", {"x": x}, initializers={"indices": np.array([1, 2], np.int64)}
+    )
+    # ONNX shape inference omits the scalar shape here; declare the known rank.
+    model.graph.output[0].CopyFrom(
+        helper.make_tensor_value_info("out0", TensorProto.FLOAT, [])
+    )
+    path = tmp_path / "scalar.aimodel"
+    coreai_onnx.convert(model).save_asset(path)
+    report = await coreai_onnx.verify(
+        model, path, inputs={"x": x}, isolate_execution=True
+    )
+    assert report.passed
+
+
 _skip_gpu_const_output = skip_on_compute_unit(
     "gpu",
     reason="Core AI GPU specializer fails to load any model with a constant-valued output (upstream issue); default/CPU/ANE are fine",

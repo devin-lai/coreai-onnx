@@ -226,7 +226,11 @@ def replace_mean_variance_normalization(
     mean = coreai.reduce_mean(x, sorted(axes))
     centered = coreai.broadcasting_sub(x, mean)
     var = coreai.reduce_mean(coreai.broadcasting_mul(centered, centered), sorted(axes))
-    return coreai.broadcasting_divide(centered, coreai.sqrt(var))
+    # ONNX's function adds epsilon after sqrt, including for constant inputs.
+    std = coreai.broadcasting_add(
+        coreai.sqrt(var), coreai.constant(1e-9, dtype=tensor_type(x).element_type)
+    )
+    return coreai.broadcasting_divide(centered, std)
 
 
 # ---------------------------------------------------------------------------

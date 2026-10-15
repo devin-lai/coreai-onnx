@@ -39,6 +39,8 @@ def _build_consumers(graph: onnx.GraphProto) -> dict[str, list[onnx.NodeProto]]:
     """name -> nodes consuming it, in graph order."""
     consumers: dict[str, list[onnx.NodeProto]] = {}
     for n in graph.node:
+        if n.domain not in ("", "ai.onnx"):
+            continue
         for name in n.input:
             consumers.setdefault(name, []).append(n)
     return consumers
@@ -75,6 +77,8 @@ def _greedy_claim(graph: onnx.GraphProto, match_one) -> list:
     matches = []
     claimed: set[int] = set()
     for n in graph.node:
+        if n.domain not in ("", "ai.onnx"):
+            continue
         m = match_one(n)
         if m is None or any(id(node) in claimed for node in m.nodes):
             continue

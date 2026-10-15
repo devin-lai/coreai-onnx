@@ -117,7 +117,7 @@ def _render_convert(outcome: _Outcome, args: argparse.Namespace) -> None:
         console.print(f"[yellow]Repaired:[/yellow] {repair['summary']}")
 
     for w in outcome.warnings:
-        if w["code"] == "platform_no_runtime":
+        if w["code"] != "onnxruntime_missing":
             console.print(f"[yellow]Note:[/yellow] {w['message']}")
 
     if err is not None and err["code"] == "precision_check_error":
@@ -139,6 +139,8 @@ def _render_convert(outcome: _Outcome, args: argparse.Namespace) -> None:
 
 
 def _render_verify(outcome: _Outcome, args: argparse.Namespace) -> None:
+    for w in outcome.warnings:
+        console.print(f"[yellow]Note:[/yellow] {w['message']}")
     err = outcome.error
     if err is not None and outcome.result is None:
         if err["code"] == "platform_unsupported":
@@ -265,7 +267,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Also accept an output that fails rtol/atol but reaches this "
         "PSNR in dB (for benign accumulation noise on large-magnitude "
-        "outputs; unset by default)",
+        "outputs; default: 50 dB)",
     )
     p_convert.add_argument(
         "--compute-unit",
@@ -317,7 +319,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Also accept an output that fails rtol/atol but reaches this "
         "PSNR in dB (for benign accumulation noise on large-magnitude "
-        "outputs; unset by default)",
+        "outputs; default: 50 dB)",
     )
     p_verify.add_argument(
         "--compute-unit",

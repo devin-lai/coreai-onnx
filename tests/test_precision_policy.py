@@ -134,7 +134,9 @@ def test_cpu_only_abort_propagates(monkeypatch):
     calls = []
     monkeypatch.setattr(coreai_onnx, "verify", _stub_verify(by_unit, calls))
     with pytest.raises(RuntimeError, match="fp32 aborted too"):
-        _service._run_precision_check(object(), "m.aimodel", _args(), inputs={}, expected={})
+        _service._run_precision_check(
+            object(), "m.aimodel", _args(), inputs={}, expected={}
+        )
 
 
 def test_explicit_unit_is_verdict_without_fallback(monkeypatch):
@@ -173,5 +175,18 @@ def test_default_floor_applied_when_min_psnr_unset(monkeypatch):
         return _report(True)
 
     monkeypatch.setattr(coreai_onnx, "verify", _fake)
-    _service._run_precision_check(object(), "m.aimodel", _args(), inputs={}, expected={})
+    _service._run_precision_check(
+        object(), "m.aimodel", _args(), inputs={}, expected={}
+    )
     assert seen["min_psnr"] == _service._DEFAULT_BENIGN_PSNR_DB
+
+
+@pytest.mark.parametrize("psnr", [80.0, float("inf")])
+def test_benign_warning_reports_effective_floor(monkeypatch, psnr):
+    pc, calls = _run(
+        monkeypatch,
+        {None: _report(True, elementwise=False, psnr=psnr)},
+        _args(min_psnr=70.0),
+    )
+    assert calls == [None]
+    assert "70 dB floor" in pc.warnings[0]["message"]

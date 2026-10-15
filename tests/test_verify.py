@@ -203,6 +203,46 @@ def test_generate_inputs_dynamic_dim_default():
     assert inputs["x"].shape == (5, 3)
 
 
+def test_generate_inputs_preserves_zero_length_dimensions():
+    model = single_op_model("Identity", {"x": np.empty((0, 3), dtype=np.float32)})
+    assert generate_inputs(model)["x"].shape == (0, 3)
+    assert validate_onnxruntime(model)["out0"].shape == (0, 3)
+
+
+@pytest.mark.parametrize("got_shape", [(3,), (1, 2, 3), (6,), (0, 3)])
+@pytest.mark.parametrize("min_psnr", [None, 0.0])
+def test_compare_rejects_output_shape_mismatches(got_shape, min_psnr):
+    from coreai_onnx._verify import _compare
+
+    expected = np.ones((2, 3), dtype=np.float32)
+    got = np.ones(got_shape, dtype=np.float32)
+    report = _compare("y", expected, got, None, None, min_psnr)
+    assert not report.passed
+    assert not report.elementwise_passed
+
+
+def test_compare_nonfinite_metrics_do_not_raise_numpy_warnings():
+    from coreai_onnx._verify import _compare
+
+    expected = np.array([np.inf, -np.inf, np.nan, 1.0])
+    with np.errstate(invalid="raise"):
+        report = _compare("y", expected, expected.copy(), None, None)
+    assert report.passed
+    assert report.expected_nonfinite == 3
+
+
+@pytest.mark.parametrize("magnitude", [1e-200, 1e200])
+def test_compare_psnr_does_not_underflow_or_overflow(magnitude):
+    from coreai_onnx._verify import _compare
+
+    expected = np.array([magnitude], dtype=np.float64)
+    got = np.zeros_like(expected)
+    with np.errstate(over="raise", under="raise"):
+        report = _compare("y", expected, got, 0.0, 0.0, 50.0)
+    assert report.psnr == pytest.approx(0.0)
+    assert not report.passed
+
+
 def _save_aimodel(model: onnx.ModelProto, path):
     converter = coreai_onnx.OnnxConverter()
     converter.add_onnx_model(model)

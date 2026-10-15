@@ -26,6 +26,18 @@ from .helpers import (
 pytestmark = [pytest.mark.ops, *COREAI_RUNTIME_MARKS, requires_coreai_runtime]
 
 
+@pytest.mark.parametrize("keepdims", [0, 1])
+async def test_reduce_log_sum_exp_infinite_slices(keepdims):
+    x = np.array([[-np.inf, -np.inf], [1.0, np.inf], [-np.inf, 2.0]], np.float32)
+    model = single_op_model(
+        "ReduceLogSumExp",
+        {"x": x},
+        attrs={"keepdims": keepdims},
+        initializers={"axes": np.array([1], np.int64)},
+    )
+    await assert_parity(model, {"x": x})
+
+
 def _seed(key: str) -> int:
     return zlib.crc32(key.encode()) & 0xFFFFFFFF
 

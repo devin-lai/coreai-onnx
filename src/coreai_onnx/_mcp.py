@@ -13,8 +13,8 @@ as status:"error" envelopes — never as MCP protocol errors. Exit codes do not
 exist over MCP; status/error.code carry the same information.
 """
 
-from __future__ import annotations
-
+# Keep annotations evaluated: MCP SDK 1.10 inspects parameter types with
+# issubclass() and cannot handle postponed string annotations.
 import argparse
 import sys
 from typing import Any

@@ -78,7 +78,8 @@ def narrow_array(arr: np.ndarray, *, context: str) -> np.ndarray:
     INT64_MAX/MIN sentinel values (ONNX's "unbounded" markers, e.g. Slice
     ends) are clamped silently. Any other out-of-int32-range value raises.
     uint64 follows the same rules as int64, using INT64_MAX as the sentinel.
-    float64 values are clipped to the float32 range and cast (no warning).
+    Finite float64 values are clipped to the float32 range and cast (no
+    warning); NaN and signed infinities are preserved.
     """
     target = _NARROW_NUMPY.get(arr.dtype)
     if target is None:
@@ -100,7 +101,8 @@ def narrow_array(arr: np.ndarray, *, context: str) -> np.ndarray:
             )
         return _as_array(np.clip(arr, info.min, info.max), target)
     finfo = np.finfo(target)
-    return _as_array(np.clip(arr, finfo.min, finfo.max), target)
+    clipped = np.where(np.isfinite(arr), np.clip(arr, finfo.min, finfo.max), arr)
+    return _as_array(clipped, target)
 
 
 def tensor_type_from_value_info(vi: onnx.ValueInfoProto) -> RankedTensorType:

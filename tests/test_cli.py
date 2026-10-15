@@ -7,6 +7,7 @@
 
 import numpy as np
 import onnx
+import pytest
 
 from coreai_onnx._cli import main
 from tests.helpers import (
@@ -324,7 +325,7 @@ def test_verify_human_output_handles_nonfinite_metrics(tmp_path, monkeypatch, ca
     import coreai_onnx._service as service
     from coreai_onnx import OutputReport, VerifyReport
 
-    monkeypatch.setattr(service.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(service, "_coreai_runtime_available", lambda: True)
 
     async def _nonfinite_verify(*_a, **_k):
         return VerifyReport(
@@ -358,3 +359,35 @@ def test_import_main():
     from coreai_onnx._cli import main as _main
 
     assert callable(_main)
+
+
+@pytest.mark.parametrize("command", ["convert", "verify"])
+def test_human_output_includes_precision_warnings(command, monkeypatch, capsys):
+    from coreai_onnx import _cli, _service
+
+    warnings = [
+        _service._warning("precision_hardware_divergence", "used cpu_only fallback"),
+        _service._warning("precision_benign_noise", "accepted via PSNR"),
+        _service._warning("reference_nonfinite", "reference contains NaN"),
+    ]
+    precision = {"outputs": [], "passed": True}
+    result = (
+        precision
+        if command == "verify"
+        else {
+            "total_nodes": 1,
+            "output_path": "m.aimodel",
+            "precision": precision,
+        }
+    )
+    outcome = _service._Outcome(0, result=result, warnings=warnings)
+    monkeypatch.setattr(_cli, "_execute_command", lambda *a: (outcome, False))
+    argv = (
+        ["verify", "m.onnx", "m.aimodel"]
+        if command == "verify"
+        else ["convert", "m.onnx", "-o", "m.aimodel"]
+    )
+    assert main(argv) == 0
+    output = capsys.readouterr().out
+    for warning in warnings:
+        assert warning["message"] in output

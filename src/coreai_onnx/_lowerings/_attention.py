@@ -72,6 +72,10 @@ def _materialize(x: Value) -> Value:
     ops — and costs two copies of an attention input, which is negligible
     next to the attention itself.
     """
+    if tensor_type(x).rank == 0:
+        # A scalar additive mask broadcasts identically as a length-one vector
+        # and needs an axis for the pad/slice materialization barrier.
+        x = coreai.reshape(x, [1])
     rank = tensor_type(x).rank
     dims = list(tensor_type(x).shape)
     if any(d < 0 for d in dims):
